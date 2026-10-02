@@ -27,6 +27,18 @@ That renders the 11-second demo in [src/scenes/demo.js](src/scenes/demo.js). Ope
 
 On Linux, `render.mjs` starts Chrome with `--no-sandbox` (Ubuntu 23.10+ blocks Chrome's sandbox in headless use) and also finds a Chromium installed by Playwright. With no GPU at all, add `--soft-gl` to render WebGL in software: slow on watercolour fills, but it works. On a headless Linux machine with an NVIDIA GPU (a cloud or cluster node), add `--gpu-angle=gl-egl` (or `vulkan`); `node gpu_probe.mjs <chrome path>` shows which renderer each set of flags gets.
 
+## Fetch reference footage or music
+
+`fetch.mjs` downloads from YouTube, TikTok, Instagram, SoundCloud and the other platforms [cobalt](https://github.com/imputnet/cobalt) supports, into `assets/`. Public cobalt instances block scripts, so run your own first (Docker):
+
+```bash
+docker run -d --name cobalt -p 9000:9000 -e API_URL=http://localhost:9000/ ghcr.io/imputnet/cobalt:11
+node fetch.mjs https://www.youtube.com/watch?v=... --audio        # a song → assets/*.mp3, then render with --audio=assets/<file>
+node fetch.mjs https://www.instagram.com/p/...                    # video, or every image in a carousel
+```
+
+Point it at another instance with `--api=<url>` or `COBALT_API_URL`, and pass `--key=<key>` or `COBALT_API_KEY` if that instance needs one. Only download what you have the right to use.
+
 ## What's here
 
 | path | what it is |
@@ -37,5 +49,6 @@ On Linux, `render.mjs` starts Chrome with `--no-sandbox` (Ubuntu 23.10+ blocks C
 | [src/timeline.js](src/timeline.js) | Shots, loops and the brush-wipe transition |
 | [src/config.js](src/config.js) | Length and tempo |
 | [src/scenes/](src/scenes/) | Your video goes here (the demo is an example) |
+| [fetch.mjs](fetch.mjs) | Downloads reference video, music or images through a cobalt instance |
 | [render.mjs](render.mjs) | Headless renderer: contact sheets, frame strips, crops, stills, MP4 |
 | [docs/](docs/) | Model sheets: [emotions](docs/emotions.jpg) (also [animated](docs/emotions.webp)) and [views, motion and hats](docs/views.jpg) |
