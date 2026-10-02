@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Shomal Screed motion</title>
+<style>
+  @font-face { font-family: Vazirmatn; src: url(node_modules/vazirmatn/fonts/webfonts/Vazirmatn[wght].woff2) format("woff2"); font-weight: 100 900; }
+  html, body { margin: 0; background: #111; }
+  canvas { display: block; width: 540px; height: 960px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// Every frame is a pure function of time t (seconds): renderAt(t) can draw any frame in any order.
+const W = 1080, H = 1920, FPS = 30, DURATION = 20;
+const ctx = document.getElementById('c').getContext('2d');
+
+const C = {
+  navy: '#1c2a52', navyDeep: '#121c38', red: '#d7322b', gold: '#f3b63a', white: '#ffffff',
+  wall: '#ece6dc', wallLine: '#ddd5c8', slab: '#a9a49c', slabDark: '#8d8880',
+  mortar: ['#2b2b2d', '#3a3a3c', '#232325', '#47474a', '#1b1b1d'], smooth: '#56575a',
+  steel: '#9aa3ad', steelDark: '#5d656e', hose: '#202022', laser: '#ff2a2a',
+};
+
+// ---------- helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+const easeInOut = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const backOut = k => { const s = 1.6; k -= 1; return k * k * ((s + 1) * k + s) + 1; };
+function rand(i) { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+const fa = n => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
+
+function rr(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function text(s, x, y, size, color, weight = 800, align = 'center', alpha = 1) {
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'rtl'; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.font = `${weight} ${size}px Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+}
+function ltrText(s, x, y, size, color, weight = 700, alpha = 1) {
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'ltr'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `${weight} ${size}px Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+}
+function chevron(x, y, s, color, alpha = 1) {
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x + s * .55, y - s * .5); ctx.lineTo(x + s * .55, y - s * .2);
+  ctx.lineTo(x, y + s * .3); ctx.lineTo(x - s * .55, y - s * .2); ctx.lineTo(x - s * .55, y - s * .5); ctx.closePath();
+  ctx.fill(); ctx.restore();
+}
+
+// ---------- the scene: a floor cross-section ----------
+const FLOOR = 1080;           // top of the concrete base slab
+const LEVEL = 1010;           // laser level line = finished screed height
+const HEAPS = [300, 560, 820];
+
+// Pour schedule: the tripod sits at each heap spot in turn and is dragged to the next.
+const POUR = [[3.4, 4.4], [4.9, 5.9], [6.4, 7.3]];
+function tripodX(t) {
+  if (t < 4.4) return HEAPS[0];
+  if (t < 4.9) return lerp(HEAPS[0], HEAPS[1], easeInOut(prog(t, 4.4, 4.9)));
+  if (t < 5.9) return HEAPS[1];
+  if (t < 6.4) return lerp(HEAPS[1], HEAPS[2], easeInOut(prog(t, 5.9, 6.4)));
+  return HEAPS[2];
+}
+function heapAmount(i, t) { return easeOut(prog(t, POUR[i][0] + .15, POUR[i][1] + .1)); }
+
+// Surface height (y) of the mortar at x, before levelling: overlapping cones.
+function heapSurface(x, t) {
+  let top = FLOOR;
+  HEAPS.forEach((hx, i) => {
+    const a = heapAmount(i, t); if (a <= 0) return;
+    const h = 125 * Math.sqrt(a), halfW = 175 * Math.sqrt(a) + 10;
+    const d = Math.abs(x - hx);
+    if (d < halfW) top = Math.min(top, FLOOR - h * (1 - d / halfW) - 4 * Math.sin(x * .09) * a);
+  });
+  return top;
+}
+const STRAIGHT = [10.6, 13.6];  // straightedge pass
+const TROWEL = [14.0, 16.6];    // power trowel pass
+function straightFront(t) { return lerp(-120, 1200, easeInOut(prog(t, STRAIGHT[0], STRAIGHT[1]))); }
+function trowelX(t) { return lerp(-160, 1240, easeInOut(prog(t, TROWEL[0], TROWEL[1]))); }
+
+function surface(x, t) {
+  const raw = heapSurface(x, t);
+  if (t < STRAIGHT[0]) return raw;
+  const f = straightFront(t);
+  if (x < f - 40) return LEVEL;
+  if (x < f) return lerp(LEVEL, Math.min(raw, LEVEL - 14), (x - (f - 40)) / 40); // material pushed ahead of the bar
+  return raw;
+}
+
+function drawWall(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#f4efe7'); g.addColorStop(1, C.wall);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = C.wallLine; ctx.lineWidth = 2;               // block wall joints
+  for (let y = 560, r = 0; y < SCENE_Y; y += 70, r++) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    for (let x = (r % 2) * 90; x < W; x += 180) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 70); ctx.stroke(); }
+  }
+  const fade = ctx.createLinearGradient(0, 520, 0, 700);          // fade the wall out towards the top
+  fade.addColorStop(0, '#f4efe7'); fade.addColorStop(1, 'rgba(244,239,231,0)');
+  ctx.fillStyle = fade; ctx.fillRect(0, 520, W, 180);
+}
+function drawSlab() {
+  ctx.fillStyle = C.slab; ctx.fillRect(-200, FLOOR, W + 400, 170);
+  ctx.strokeStyle = C.slabDark; ctx.lineWidth = 3;
+  for (let x = -400; x < W + 200; x += 34) { ctx.beginPath(); ctx.moveTo(x, FLOOR + 170); ctx.lineTo(x + 170, FLOOR); ctx.stroke(); }
+  ctx.fillStyle = '#7c776f'; ctx.fillRect(-200, FLOOR + 170, W + 400, 14);
+  ctx.fillStyle = '#6b665f'; ctx.fillRect(-200, FLOOR + 184, W + 400, 700);          // ground below, fills the frame
+  for (let i = 0; i < 260; i++) { ctx.fillStyle = i % 2 ? '#625d56' : '#77726a'; ctx.beginPath(); ctx.arc(-200 + rand(i + 7e3) * (W + 400), FLOOR + 200 + rand(i + 8e3) * 600, 3 + rand(i) * 6, 0, 7); ctx.fill(); }
+}
+const SCENE_Y = 1150, SCENE_S = 1.3;   // the floor line sits here on screen, scene drawn 1.3x
+function sceneSpace() { ctx.translate(W / 2, SCENE_Y); ctx.scale(SCENE_S, SCENE_S); ctx.translate(-W / 2, -FLOOR); }
+
+function drawMortar(t) {
+  // Silhouette.
+  ctx.beginPath(); ctx.moveTo(0, FLOOR);
+  for (let x = 0; x <= W; x += 6) ctx.lineTo(x, surface(x, t));
+  ctx.lineTo(W, FLOOR); ctx.closePath();
+  ctx.fillStyle = C.mortar[0]; ctx.fill();
+  // Granular grains: dark, crumbly, damp-sand look. Behind the trowel the surface turns smooth.
+  ctx.save(); ctx.clip();
+  const tx = t >= TROWEL[0] ? trowelX(t) : -1e9;
+  for (let i = 0; i < 2600; i++) {
+    const x = rand(i) * W, y = FLOOR - rand(i + 9e3) * 140;
+    if (y < surface(x, t) - 2) continue;
+    const smoothed = x < tx - 60 && y < LEVEL + 10;
+    if (smoothed) continue;
+    ctx.fillStyle = C.mortar[1 + (i % 4)];
+    const r = 2 + rand(i + 5e3) * 4.5;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  }
+  if (t >= TROWEL[0]) {                                            // troweled skin
+    const sx = clamp(tx - 60, 0, W);
+    const g = ctx.createLinearGradient(0, LEVEL, 0, LEVEL + 30);
+    g.addColorStop(0, '#6a6b6f'); g.addColorStop(1, C.mortar[0]);
+    ctx.fillStyle = g; ctx.fillRect(0, LEVEL, sx, 30);
+    const shine = prog(t, 16.4, 17.6);                             // a sheen sweeps across the finished floor
+    if (shine > 0 && shine < 1) {
+      const px = lerp(-200, W + 200, shine);
+      const s = ctx.createLinearGradient(px - 120, 0, px + 120, 0);
+      s.addColorStop(0, 'rgba(255,255,255,0)'); s.addColorStop(.5, 'rgba(255,255,255,.45)'); s.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = s; ctx.fillRect(0, LEVEL, sx, 8);
+    }
+  }
+  ctx.restore();
+}
+
+function drawHoseAndTripod(t, alpha) {
+  if (alpha <= 0) return;
+  const x = tripodX(t), potTop = 905, potBot = 965;
+  ctx.save(); ctx.globalAlpha = alpha;
+  // Thick rubber delivery hose coming in from the pump (off-screen left), into the SIDE of the pot.
+  ctx.strokeStyle = C.hose; ctx.lineWidth = 34; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-60, 760);
+  ctx.bezierCurveTo(x * .35, 700, x - 160, 960, x - 62, 936); ctx.stroke();
+  ctx.strokeStyle = '#3a3a3d'; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(-60, 748); ctx.bezierCurveTo(x * .35, 688, x - 165, 948, x - 66, 924); ctx.stroke();
+  ctx.fillStyle = C.steelDark; rr(x - 72, 920, 22, 34, 4); ctx.fill();          // metal coupling
+  // Three thin splayed legs with foot pads.
+  ctx.strokeStyle = C.steelDark; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  [[-1, 0], [1, 0], [.15, 1]].forEach(([s, back]) => {
+    const fx = x + s * 92, fy = FLOOR - 2 - back * 6;
+    const top = surface(fx, t);
+    ctx.beginPath(); ctx.moveTo(x + s * 30, potBot - 6); ctx.lineTo(fx, Math.min(fy, top + 6)); ctx.stroke();
+    ctx.fillStyle = C.steelDark; rr(fx - 16, Math.min(fy, top + 6) - 4, 32, 9, 3); ctx.fill();
+  });
+  // Short open cylindrical steel pot, mortar-stained.
+  const g = ctx.createLinearGradient(x - 50, 0, x + 50, 0);
+  g.addColorStop(0, '#7b838c'); g.addColorStop(.45, '#c3cad1'); g.addColorStop(1, '#6b737b');
+  ctx.fillStyle = g; ctx.fillRect(x - 50, potTop, 100, potBot - potTop);
+  ctx.fillStyle = 'rgba(60,60,62,.55)'; ctx.fillRect(x - 50, potBot - 18, 100, 18);
+  ctx.fillStyle = '#4b5158'; ctx.beginPath(); ctx.ellipse(x, potTop, 50, 11, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = C.mortar[0]; ctx.beginPath(); ctx.ellipse(x, potTop + 2, 42, 7, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawFallingMix(t) {
+  // Semi-moist mix drops out of the bottom of the pot as crumbly clumps (never a liquid stream).
+  const i = POUR.findIndex(([a, b]) => t >= a && t <= b);
+  if (i < 0) return;
+  const x = HEAPS[i], y0 = 968, y1 = heapSurface(x, t);
+  const k = prog(t, POUR[i][0], POUR[i][0] + .2) * (1 - prog(t, POUR[i][1] - .15, POUR[i][1]));
+  for (let n = 0; n < 34; n++) {
+    const ph = (t * 2.4 + rand(n) ) % 1;
+    const y = lerp(y0, y1, ph * ph);
+    if (y > y1) continue;
+    ctx.fillStyle = C.mortar[n % 5]; ctx.globalAlpha = k;
+    const r = 3 + rand(n + 50) * 5;
+    ctx.beginPath(); ctx.arc(x + (rand(n + 99) - .5) * 30, y, r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawLaser(t) {
+  const a = prog(t, 7.3, 7.8) * (1 - prog(t, 14.2, 14.7));
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  const bx = 890, by = LEVEL;                                       // rotating laser on a tall stand, right side
+  ctx.strokeStyle = '#2b2f36'; ctx.lineWidth = 7;
+  [[-46, FLOOR], [46, FLOOR], [0, FLOOR + 4]].forEach(([dx, fy]) => { ctx.beginPath(); ctx.moveTo(bx, by + 40); ctx.lineTo(bx + dx, Math.min(fy, surface(bx + dx, t))); ctx.stroke(); });
+  ctx.fillStyle = '#f0a21a'; rr(bx - 34, by - 4, 68, 46, 10); ctx.fill();
+  ctx.fillStyle = '#222'; rr(bx - 20, by - 40, 40, 40, 8); ctx.fill();
+  ctx.fillStyle = C.laser; ctx.beginPath(); ctx.arc(bx, by - 20, 7, 0, 7); ctx.fill();
+  // The beam draws out from the device to the left, then the target line glows.
+  const reach = easeOut(prog(t, 7.8, 8.8));
+  const x0 = lerp(bx, 0, reach);
+  ctx.shadowColor = C.laser; ctx.shadowBlur = 18;
+  ctx.strokeStyle = C.laser; ctx.lineWidth = 4;
+  ctx.setLineDash([26, 12]); ctx.lineDashOffset = -t * 120;
+  ctx.beginPath(); ctx.moveTo(bx - 10, by - 20); ctx.lineTo(x0, by - 20); ctx.stroke();
+  ctx.setLineDash([]);
+  // Red dots where the beam hits the heaps.
+  HEAPS.forEach(hx => { if (hx > x0) { ctx.beginPath(); ctx.arc(hx, by - 20, 9 + 2 * Math.sin(t * 9), 0, 7); ctx.fillStyle = C.laser; ctx.fill(); } });
+  ctx.restore();
+  // Level marker on the left wall.
+  const m = prog(t, 8.6, 9.2) * (1 - prog(t, 14.2, 14.7));
+  if (m > 0) {
+    ctx.save(); ctx.globalAlpha = m;
+    ctx.fillStyle = C.navy; rr(-40, LEVEL - 40, 92, 40, 10); ctx.fill();
+    text('تراز', 6, LEVEL - 20, 26, C.white, 800);
+    ctx.restore();
+  }
+}
+
+function drawStraightedge(t) {
+  if (t < STRAIGHT[0] - .3 || t > STRAIGHT[1] + .4) return;
+  const a = prog(t, STRAIGHT[0] - .3, STRAIGHT[0]) * (1 - prog(t, STRAIGHT[1], STRAIGHT[1] + .4));
+  const f = straightFront(t);
+  ctx.save(); ctx.globalAlpha = a;
+  // Long aluminium straightedge riding on the level line, tilted slightly as it is pulled.
+  ctx.translate(f - 230, LEVEL);
+  const g = ctx.createLinearGradient(0, -30, 0, 0);
+  g.addColorStop(0, '#f2f5f8'); g.addColorStop(.5, '#b7bfc8'); g.addColorStop(1, '#7d8690');
+  ctx.fillStyle = g; rr(-200, -30, 430, 30, 6); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; rr(-190, -26, 410, 5, 2); ctx.fill();
+  ctx.fillStyle = '#4d545c';                                                        // two grips for the crew
+  [-120, 150].forEach(gx => { rr(gx - 6, -62, 12, 34, 4); ctx.fill(); rr(gx - 26, -70, 52, 12, 6); ctx.fill(); });
+  ctx.restore();
+  // Crumbs pushed ahead of the bar.
+  for (let n = 0; n < 14; n++) {
+    const px = f + 6 + rand(n + 300) * 40, py = LEVEL - 6 - rand(n + 400) * 22 + Math.sin(t * 14 + n) * 3;
+    ctx.fillStyle = C.mortar[n % 5]; ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(px, py, 3 + rand(n) * 3, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawTrowel(t) {
+  if (t < TROWEL[0] - .3 || t > TROWEL[1] + .5) return;
+  const a = prog(t, TROWEL[0] - .3, TROWEL[0]) * (1 - prog(t, TROWEL[1], TROWEL[1] + .5));
+  const x = trowelX(t), y = LEVEL;
+  ctx.save(); ctx.globalAlpha = a;
+  // Handle up and to the left (operator walks behind).
+  ctx.strokeStyle = '#33373d'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y - 60); ctx.lineTo(x - 230, y - 330); ctx.stroke();
+  ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(x - 262, y - 345); ctx.lineTo(x - 198, y - 315); ctx.stroke();
+  // Engine block.
+  ctx.fillStyle = C.red; rr(x - 52, y - 112, 104, 62, 12); ctx.fill();
+  ctx.fillStyle = '#2b2b2b'; rr(x - 40, y - 132, 70, 24, 6); ctx.fill();
+  // Ring guard + spinning blades (perspective ellipse).
+  ctx.fillStyle = '#4a4f56'; ctx.beginPath(); ctx.ellipse(x, y - 22, 150, 30, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#8e969f'; ctx.lineWidth = 8; ctx.beginPath(); ctx.ellipse(x, y - 22, 150, 30, 0, 0, 7); ctx.stroke();
+  ctx.strokeStyle = '#d6dbe0'; ctx.lineWidth = 9;
+  for (let b = 0; b < 4; b++) {
+    const ang = t * 14 + b * Math.PI / 2;
+    ctx.beginPath(); ctx.moveTo(x, y - 18); ctx.lineTo(x + Math.cos(ang) * 132, y - 18 + Math.sin(ang) * 22); ctx.stroke();
+  }
+  ctx.fillStyle = '#2b2b2b'; ctx.fillRect(x - 6, y - 52, 12, 34);
+  ctx.restore();
+}
+
+// ---------- graphics layers ----------
+const STEPS = [
+  { from: 3.0, to: 7.3, n: 1, title: 'ملات نیمه‌تر از دل سه‌پایه', sub: 'پوکه معدنی + سیمان + کمی آب' },
+  { from: 7.3, to: 10.5, n: 2, title: 'تراز دقیق با لیزر', sub: 'ارتفاع کف از روی خط لیزر' },
+  { from: 10.5, to: 14.0, n: 3, title: 'شمشه‌کشی', sub: 'سطح صاف روی خط تراز' },
+  { from: 14.0, to: 17.4, n: 4, title: 'ماله پروانه', sub: 'سطح یکدست، آماده‌ی کف‌پوش' },
+];
+
+function titleBox(title, sub, t0, t1, t, y = 1270) {
+  const a = prog(t, t0, t0 + .35) * (1 - prog(t, t1 - .3, t1));
+  if (a <= 0) return;
+  const k = backOut(prog(t, t0, t0 + .45));
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.translate(0, (1 - k) * 60);
+  const w = 860, h = 210, x = (W - w) / 2;
+  ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+  ctx.fillStyle = C.navy; rr(x, y, w, h, 28); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = C.red; rr(x + w - 22, y + 22, 10, h - 44, 5); ctx.fill();       // red side bar (right: start of RTL line)
+  text(title, W / 2 + 6, y + 78, 62, C.white, 900);
+  text(sub, W / 2 + 6, y + 152, 40, C.gold, 700);
+  ctx.restore();
+}
+
+function stepTracker(t) {
+  const a = prog(t, 3.0, 3.4) * (1 - prog(t, 17.0, 17.4));
+  if (a <= 0) return;
+  const cur = STEPS.findIndex(s => t >= s.from && t < s.to);
+  const y = 420, gap = 190, x0 = W / 2 + gap * 1.5;                              // RTL: step 1 on the right
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.strokeStyle = '#cfc6b8'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - gap * 3, y); ctx.stroke();
+  const fillTo = cur < 0 ? 3 : cur + prog(t, STEPS[cur].from, STEPS[cur].to);
+  ctx.strokeStyle = C.red; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - gap * Math.min(3, fillTo), y); ctx.stroke();
+  STEPS.forEach((s, i) => {
+    const on = i <= cur || cur < 0, active = i === cur;
+    const r = active ? 46 + 3 * Math.sin(t * 6) : 36;
+    ctx.fillStyle = on ? (active ? C.red : C.navy) : '#e2dbd0';
+    ctx.beginPath(); ctx.arc(x0 - gap * i, y, r, 0, 7); ctx.fill();
+    text(fa(s.n), x0 - gap * i, y + 3, active ? 44 : 34, on ? C.white : '#9b9282', 900);
+  });
+  ctx.restore();
+}
+
+function hook(t) {
+  const a = 1 - prog(t, 2.6, 3.0);
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = C.navyDeep; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 9; i++) {                                                    // chevrons rising, brand motif
+    const y = 1900 - ((t * 420 + i * 260) % 2340);
+    chevron(W / 2, y, 1200, i % 2 ? '#22325f' : '#1a2749', 1);
+  }
+  const k1 = backOut(prog(t, .1, .6)), k2 = backOut(prog(t, .5, 1.0)), k3 = easeOut(prog(t, 1.1, 1.6));
+  ctx.save(); ctx.translate(W / 2, 820); ctx.scale(k1, k1);
+  text('کف‌سازی با پوکه اسکرید', 0, 0, 86, C.white, 900); ctx.restore();
+  ctx.save(); ctx.translate(W / 2, 950); ctx.scale(k2, k2);
+  text('دقیقاً چطور انجام می‌شه؟', 0, 0, 74, C.gold, 800); ctx.restore();
+  ctx.globalAlpha = a * k3;
+  ctx.fillStyle = C.red; rr(W / 2 - 230, 1060, 460, 100, 50); ctx.fill();
+  text(`${fa(4)} مرحله، ${fa(20)} ثانیه`, W / 2, 1112, 52, C.white, 900);
+  ctx.restore();
+}
+
+function wipe(t, at) {
+  // Navy chevron wipe across step changes.
+  const k = prog(t, at - .25, at + .25);
+  if (k <= 0 || k >= 1) return;
+  for (let i = 0; i < 4; i++) {
+    const y = lerp(H + 900, -900, easeInOut(clamp(k * 1.25 - i * .08)));
+    chevron(W / 2, y + i * 140, 1500, i % 2 ? C.navy : C.red, .9);
+  }
+}
+
+function brandCorner(t) {
+  // Placeholder for the real logo (top-left, ~250px wide): swap in the transparent PNG for the final.
+  const a = prog(t, 2.8, 3.3) * (1 - prog(t, 17.2, 17.5));
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = C.navy; rr(40, 100, 270, 92, 20); ctx.fill();
+  ctx.fillStyle = C.red; rr(54, 114, 8, 64, 4); ctx.fill();
+  text('شمال اسکرید', 186, 132, 40, C.white, 900);
+  ltrText('@Shomal_Screed', 186, 170, 22, C.gold, 600);
+  ctx.restore();
+}
+
+function watermark(t) {
+  // Anti-repost: semi-transparent mark drifting on sine paths through the middle.
+  const a = prog(t, 3.0, 3.5) * (1 - prog(t, 17.2, 17.5));
+  if (a <= 0) return;
+  const x = W / 2 + Math.sin(t * .7) * 260, y = 760 + Math.sin(t * .43 + 1) * 140;
+  ctx.save(); ctx.globalAlpha = .22 * a; ctx.translate(x, y); ctx.rotate(Math.sin(t * .3) * .05);
+  chevron(0, -40, 70, C.navy); chevron(0, -10, 70, C.navy);
+  text('شمال اسکرید', 0, 40, 46, C.navy, 900);
+  ltrText('shomalscreed.ir', 0, 88, 30, C.navy, 700);
+  ctx.restore();
+}
+
+function finale(t) {
+  const a = prog(t, 17.3, 17.7);
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = C.navyDeep; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 7; i++) chevron(W / 2, 2100 - i * 330 - (t - 17.3) * 90, 1300, i % 2 ? '#22325f' : '#1a2749');
+  const k = n => backOut(prog(t, 17.5 + n * .14, 17.95 + n * .14));
+  const ys = [450, 640, 770, 850, 1000, 1130, 1220, 1350];
+  const row = (n, f) => { ctx.save(); const s = k(n), y = ys[n]; ctx.globalAlpha = a * clamp(s); ctx.translate(W / 2, y); ctx.scale(s, s); ctx.translate(-W / 2, -y); f(); ctx.restore(); };
+  row(0, () => { chevron(W / 2, 420, 150, C.gold); chevron(W / 2, 480, 150, '#c9ced6'); });
+  row(1, () => text('شمال اسکرید', W / 2, 640, 120, C.white, 900));
+  row(2, () => text('مجری تخصصی کفسازی با پوکه اسکرید', W / 2, 770, 50, C.gold, 800));
+  row(3, () => text('گروه خدمات عمرانی و مدیریت ساخت مهندس شاهنوری', W / 2, 850, 34, '#c9d1e4', 600));
+  row(4, () => { ctx.fillStyle = C.red; rr(W / 2 - 300, 940, 600, 120, 60); ctx.fill(); ltrText('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1002, 66, C.white, 900); });
+  row(5, () => ltrText('www.shomalscreed.ir', W / 2, 1130, 44, C.white, 700));
+  row(6, () => text('آمل، بابل، ساری، چالوس، نوشهر، نور و سراسر مازندران', W / 2, 1220, 34, '#c9d1e4', 600));
+  row(7, () => { ctx.strokeStyle = C.gold; ctx.lineWidth = 4; rr(W / 2 - 360, 1300, 720, 96, 48); ctx.stroke();
+                 text('این ویدیو رو برای یه سازنده بفرست', W / 2, 1350, 42, C.gold, 800); });
+  ctx.restore();
+}
+
+// ---------- frame ----------
+window.renderAt = function (t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  drawWall(t);
+  ctx.save(); sceneSpace();
+  drawSlab(); drawMortar(t);
+  const tripodAlpha = prog(t, 3.0, 3.4) * (1 - prog(t, 7.4, 7.9));
+  drawFallingMix(t); drawHoseAndTripod(t, tripodAlpha);
+  drawLaser(t); drawStraightedge(t); drawTrowel(t);
+  ctx.restore();
+  watermark(t); stepTracker(t); brandCorner(t);
+  STEPS.forEach(s => titleBox(fa(s.n) + '. ' + s.title, s.sub, s.from + .1, s.to, t));
+  [7.3, 10.5, 14.0].forEach(at => wipe(t, at));
+  hook(t); finale(t);
+};
+window.ready = document.fonts.load('900 40px Vazirmatn').then(() => document.fonts.load('600 40px Vazirmatn')).then(() => { renderAt(0); return true; });
+window.META = { W, H, FPS, DURATION };
+
+// Live preview when opened directly: ?t=5 holds a frame, otherwise it plays.
+const q = new URLSearchParams(location.search);
+if (!navigator.webdriver) window.ready.then(() => {
+  if (q.has('t')) return renderAt(+q.get('t'));
+  const s = performance.now(); (function loop() { renderAt(((performance.now() - s) / 1000) % DURATION); requestAnimationFrame(loop); })();
+});
+</script>
+</body>
+</html>
