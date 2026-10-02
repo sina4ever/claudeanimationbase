@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <title>Shomal Screed motion</title>
 <style>
+  @font-face { font-family: BNazanin; src: url(fonts/BNazaninPlus-Regular.ttf); font-weight: 400; }
+  @font-face { font-family: BNazanin; src: url(fonts/BNazanin-Bold.ttf); font-weight: 700; }
+  @font-face { font-family: BNazanin; src: url(fonts/BNazaninPlus-Black.ttf); font-weight: 900; }
   @font-face { font-family: Vazirmatn; src: url(node_modules/vazirmatn/fonts/webfonts/Vazirmatn[wght].woff2) format("woff2"); font-weight: 100 900; }
   html, body { margin: 0; background: #111; }
   canvas { display: block; width: 540px; height: 960px; margin: 0 auto; }
@@ -39,11 +42,12 @@ function rr(x, y, w, h, r) {
 }
 function text(s, x, y, size, color, weight = 800, align = 'center', alpha = 1) {
   ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'rtl'; ctx.textAlign = align; ctx.textBaseline = 'middle';
-  ctx.font = `${weight} ${size}px Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+  size *= 1.22; ctx.font = `${weight} ${size}px BNazanin, Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y);
+  ctx.strokeStyle = color; ctx.lineWidth = size * .035; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); ctx.restore();
 }
-function ltrText(s, x, y, size, color, weight = 700, alpha = 1) {
+function ltrText(s, x, y, size, color, weight = 700, alpha = 1, family = 'Vazirmatn') {
   ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'ltr'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `${weight} ${size}px Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+  ctx.font = `${weight} ${size}px ${family}`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
 }
 function chevron(x, y, s, color, alpha = 1) {
   ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.beginPath();
@@ -384,7 +388,7 @@ function finale(t) {
   row(1, () => text('شمال اسکرید', W / 2, 640, 120, C.white, 900));
   row(2, () => text('مجری تخصصی کفسازی با پوکه اسکرید', W / 2, 770, 50, C.gold, 800));
   row(3, () => text('گروه خدمات عمرانی و مدیریت ساخت مهندس شاهنوری', W / 2, 850, 34, '#c9d1e4', 600));
-  row(4, () => { ctx.fillStyle = C.red; rr(W / 2 - 300, 940, 600, 120, 60); ctx.fill(); ltrText('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1002, 66, C.white, 900); });
+  row(4, () => { ctx.fillStyle = C.red; rr(W / 2 - 300, 940, 600, 120, 60); ctx.fill(); ltrText('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1004, 76, C.white, 900, 1, 'BNazanin'); });
   row(5, () => ltrText('www.shomalscreed.ir', W / 2, 1130, 44, C.white, 700));
   row(6, () => text('آمل، بابل، ساری، چالوس، نوشهر، نور و سراسر مازندران', W / 2, 1220, 34, '#c9d1e4', 600));
   row(7, () => { ctx.strokeStyle = C.gold; ctx.lineWidth = 4; rr(W / 2 - 360, 1300, 720, 96, 48); ctx.stroke();
@@ -407,7 +411,7 @@ window.renderAt = function (t) {
   [7.3, 10.5, 14.0].forEach(at => wipe(t, at));
   hook(t); finale(t);
 };
-window.ready = document.fonts.load('900 40px Vazirmatn').then(() => document.fonts.load('600 40px Vazirmatn')).then(() => { renderAt(0); return true; });
+window.ready = Promise.all(['900 40px BNazanin', '700 40px BNazanin', '400 40px BNazanin', '700 40px Vazirmatn'].map(f => document.fonts.load(f, 'کف'))).then(() => { renderAt(0); return true; });
 window.META = { W, H, FPS, DURATION };
 
 // Live preview when opened directly: ?t=5 holds a frame, otherwise it plays.
