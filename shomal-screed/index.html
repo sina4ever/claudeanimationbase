@@ -351,16 +351,17 @@ function wipe(t, at) {
   }
 }
 
+const LOGO = new Image(); LOGO.src = 'assets/logo.png';
+function logo(cx, cy, w, alpha = 1) {
+  const h = w * LOGO.height / LOGO.width;
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.drawImage(LOGO, cx - w / 2, cy - h / 2, w, h); ctx.restore();
+}
 function brandCorner(t) {
-  // Placeholder for the real logo (top-left, ~250px wide): swap in the transparent PNG for the final.
-  const a = prog(t, 2.8, 3.3) * (1 - prog(t, 17.2, 17.5));
+  // The real logo, fixed top-left (~250px wide) for the whole video; the end card shows it large.
+  const a = 1 - prog(t, 17.2, 17.5);
   if (a <= 0) return;
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.fillStyle = C.navy; rr(40, 100, 270, 92, 20); ctx.fill();
-  ctx.fillStyle = C.red; rr(54, 114, 8, 64, 4); ctx.fill();
-  text('شمال اسکرید', 186, 132, 40, C.white, 900);
-  ltrText('@Shomal_Screed', 186, 170, 22, C.gold, 600);
-  ctx.restore();
+  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+  logo(40 + 125, 130 + 30, 250, a); ctx.restore();
 }
 
 function watermark(t) {
@@ -369,9 +370,9 @@ function watermark(t) {
   if (a <= 0) return;
   const x = W / 2 + Math.sin(t * .7) * 260, y = 760 + Math.sin(t * .43 + 1) * 140;
   ctx.save(); ctx.globalAlpha = .22 * a; ctx.translate(x, y); ctx.rotate(Math.sin(t * .3) * .05);
-  chevron(0, -40, 70, C.navy); chevron(0, -10, 70, C.navy);
-  text('شمال اسکرید', 0, 40, 46, C.navy, 900);
-  ltrText('shomalscreed.ir', 0, 88, 30, C.navy, 700);
+  logo(0, -40, 150);
+  text('شمال اسکرید', 0, 66, 46, C.navy, 900);
+  ltrText('shomalscreed.ir', 0, 112, 30, C.navy, 700);
   ctx.restore();
 }
 
@@ -382,10 +383,9 @@ function finale(t) {
   ctx.fillStyle = C.navyDeep; ctx.fillRect(0, 0, W, H);
   for (let i = 0; i < 7; i++) chevron(W / 2, 2100 - i * 330 - (t - 17.3) * 90, 1300, i % 2 ? '#22325f' : '#1a2749');
   const k = n => backOut(prog(t, 17.5 + n * .14, 17.95 + n * .14));
-  const ys = [450, 640, 770, 850, 1000, 1130, 1220, 1350];
+  const ys = [450, 0, 770, 850, 1000, 1130, 1220, 1350];
   const row = (n, f) => { ctx.save(); const s = k(n), y = ys[n]; ctx.globalAlpha = a * clamp(s); ctx.translate(W / 2, y); ctx.scale(s, s); ctx.translate(-W / 2, -y); f(); ctx.restore(); };
-  row(0, () => { chevron(W / 2, 420, 150, C.gold); chevron(W / 2, 480, 150, '#c9ced6'); });
-  row(1, () => text('شمال اسکرید', W / 2, 640, 120, C.white, 900));
+  row(0, () => logo(W / 2, 450, 460));
   row(2, () => text('مجری تخصصی کفسازی با پوکه اسکرید', W / 2, 770, 50, C.gold, 800));
   row(3, () => text('گروه خدمات عمرانی و مدیریت ساخت مهندس شاهنوری', W / 2, 850, 34, '#c9d1e4', 600));
   row(4, () => { ctx.fillStyle = C.red; rr(W / 2 - 300, 940, 600, 120, 60); ctx.fill(); ltrText('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1004, 76, C.white, 900, 1, 'BNazanin'); });
@@ -406,12 +406,12 @@ window.renderAt = function (t) {
   drawFallingMix(t); drawHoseAndTripod(t, tripodAlpha);
   drawLaser(t); drawStraightedge(t); drawTrowel(t);
   ctx.restore();
-  watermark(t); stepTracker(t); brandCorner(t);
+  watermark(t); stepTracker(t);
   STEPS.forEach(s => titleBox(fa(s.n) + '. ' + s.title, s.sub, s.from + .1, s.to, t));
   [7.3, 10.5, 14.0].forEach(at => wipe(t, at));
-  hook(t); finale(t);
+  hook(t); brandCorner(t); finale(t);
 };
-window.ready = Promise.all(['900 40px BNazanin', '700 40px BNazanin', '400 40px BNazanin', '700 40px Vazirmatn'].map(f => document.fonts.load(f, 'کف'))).then(() => { renderAt(0); return true; });
+window.ready = Promise.all([LOGO.decode(), ...['900 40px BNazanin', '700 40px BNazanin', '400 40px BNazanin', '700 40px Vazirmatn'].map(f => document.fonts.load(f, 'کف'))]).then(() => { renderAt(0); return true; });
 window.META = { W, H, FPS, DURATION };
 
 // Live preview when opened directly: ?t=5 holds a frame, otherwise it plays.

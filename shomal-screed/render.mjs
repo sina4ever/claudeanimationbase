@@ -37,7 +37,7 @@ function ffmpeg(argv) {
 
 if (args.sheet) {
   const times = args.sheet.split(',').map(Number);
-  const dir = path.join(ROOT, 'out', '.sheet'); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(ROOT, 'out', '.sheet'); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
   for (const [i, t] of times.entries()) fs.writeFileSync(path.join(dir, `${i}.jpg`), await frame(t));
   const cols = Math.min(times.length, 3), rows = Math.ceil(times.length / cols);
   const f = ffmpeg(['-i', path.join(dir, '%d.jpg'), '-vf', `scale=360:-1,tile=${cols}x${rows}:padding=8:color=white`, '-frames:v', '1', path.join(ROOT, 'out', 'sheet.jpg')]);
