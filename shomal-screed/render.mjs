@@ -13,7 +13,7 @@ const CHROME = args.chrome || process.env.CHROME_PATH || ['/opt/pw-browsers/chro
   .find(p => fs.existsSync(p));
 fs.mkdirSync(path.join(ROOT, 'out'), { recursive: true });
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.woff2': 'font/woff2', '.css': 'text/css' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
   const file = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname));
   if (!file.startsWith(ROOT) || !fs.existsSync(file)) { res.writeHead(404); return res.end(); }
@@ -22,12 +22,17 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const url = `http://127.0.0.1:${server.address().port}/index.html`;
 
-const browser = await puppeteer.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+// WebGL without a GPU: SwiftShader (software) through ANGLE.
+const browser = await puppeteer.launch({ executablePath: CHROME, protocolTimeout: 600000,
+  args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage();
+page.on('pageerror', e => console.error('page error:', e.message));
+page.on('console', m => m.type() === 'error' && console.error('console:', m.text()));
 await page.goto(url);
+await page.waitForFunction(() => window.ready, { timeout: 120000 });
 await page.evaluate(() => window.ready);
 const { W, H, FPS, DURATION } = await page.evaluate(() => window.META);
-const frame = t => page.evaluate(t => { renderAt(t); return document.getElementById('c').toDataURL('image/jpeg', .95).split(',')[1]; }, t)
+const frame = t => page.evaluate(t => { renderAt(t); return document.getElementById('out').toDataURL('image/jpeg', .95).split(',')[1]; }, t)
   .then(b64 => Buffer.from(b64, 'base64'));
 
 function ffmpeg(argv) {

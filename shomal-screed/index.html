@@ -8,413 +8,428 @@
   @font-face { font-family: BNazanin; src: url(fonts/BNazanin-Bold.ttf); font-weight: 700; }
   @font-face { font-family: BNazanin; src: url(fonts/BNazaninPlus-Black.ttf); font-weight: 900; }
   @font-face { font-family: Vazirmatn; src: url(node_modules/vazirmatn/fonts/webfonts/Vazirmatn[wght].woff2) format("woff2"); font-weight: 100 900; }
-  html, body { margin: 0; background: #111; }
-  canvas { display: block; width: 540px; height: 960px; margin: 0 auto; }
+  html, body { margin: 0; background: #000; }
+  #out { display: block; width: 540px; height: 960px; margin: 0 auto; }
 </style>
+<script type="importmap">
+{ "imports": {
+  "three": "./node_modules/three/build/three.module.js",
+  "three/addons/": "./node_modules/three/examples/jsm/"
+} }
+</script>
 </head>
 <body>
-<canvas id="c" width="1080" height="1920"></canvas>
-<script>
-// Every frame is a pure function of time t (seconds): renderAt(t) can draw any frame in any order.
-const W = 1080, H = 1920, FPS = 30, DURATION = 20;
-const ctx = document.getElementById('c').getContext('2d');
+<canvas id="out" width="1080" height="1920"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-const C = {
-  navy: '#1c2a52', navyDeep: '#121c38', red: '#d7322b', gold: '#f3b63a', white: '#ffffff',
-  wall: '#ece6dc', wallLine: '#ddd5c8', slab: '#a9a49c', slabDark: '#8d8880',
-  mortar: ['#2b2b2d', '#3a3a3c', '#232325', '#47474a', '#1b1b1d'], smooth: '#56575a',
-  steel: '#9aa3ad', steelDark: '#5d656e', hose: '#202022', laser: '#ff2a2a',
-};
+// Every frame is a pure function of time t: renderAt(t) can draw any frame in any order.
+const W = 1080, H = 1920, FPS = 30, DURATION = 22;
+const out = document.getElementById('out'), g2 = out.getContext('2d');
 
-// ---------- helpers ----------
+// ---------- timing helpers ----------
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 const lerp = (a, b, k) => a + (b - a) * k;
 const prog = (t, a, b) => clamp((t - a) / (b - a));
-const easeOut = k => 1 - Math.pow(1 - k, 3);
-const easeInOut = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
-const backOut = k => { const s = 1.6; k -= 1; return k * k * ((s + 1) * k + s) + 1; };
-function rand(i) { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+const eio = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;           // cubic in-out
+const eo = k => 1 - Math.pow(1 - k, 4);                                               // quart out
+function rnd(i) { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 const fa = n => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 
-function rr(x, y, w, h, r) {
-  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-}
-function text(s, x, y, size, color, weight = 800, align = 'center', alpha = 1) {
-  ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'rtl'; ctx.textAlign = align; ctx.textBaseline = 'middle';
-  size *= 1.22; ctx.font = `${weight} ${size}px BNazanin, Vazirmatn`; ctx.fillStyle = color; ctx.fillText(s, x, y);
-  ctx.strokeStyle = color; ctx.lineWidth = size * .035; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); ctx.restore();
-}
-function ltrText(s, x, y, size, color, weight = 700, alpha = 1, family = 'Vazirmatn') {
-  ctx.save(); ctx.globalAlpha *= alpha; ctx.direction = 'ltr'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `${weight} ${size}px ${family}`; ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
-}
-function chevron(x, y, s, color, alpha = 1) {
-  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.beginPath();
-  ctx.moveTo(x, y); ctx.lineTo(x + s * .55, y - s * .5); ctx.lineTo(x + s * .55, y - s * .2);
-  ctx.lineTo(x, y + s * .3); ctx.lineTo(x - s * .55, y - s * .2); ctx.lineTo(x - s * .55, y - s * .5); ctx.closePath();
-  ctx.fill(); ctx.restore();
-}
+// ---------- story timing ----------
+const HEAPS = [-2.15, 0, 2.15];                      // heap centres along x
+const POUR = [[0.15, 2.45], [2.9, 4.75], [5.2, 7.0]]; // tripod pours at each heap in turn
+const STRAIGHT = [11.0, 14.0];                       // straightedge pass
+const TROWEL = [14.9, 18.0];                         // power trowel pass
+const LEVEL = 0.30;                                  // finished screed height above the slab
+const HEAP_R = 1.2, HEAP_H = 0.78;
 
-// ---------- the scene: a floor cross-section ----------
-const FLOOR = 1080;           // top of the concrete base slab
-const LEVEL = 1010;           // laser level line = finished screed height
-const HEAPS = [300, 560, 820];
-
-// Pour schedule: the tripod sits at each heap spot in turn and is dragged to the next.
-const POUR = [[3.4, 4.4], [4.9, 5.9], [6.4, 7.3]];
 function tripodX(t) {
-  if (t < 4.4) return HEAPS[0];
-  if (t < 4.9) return lerp(HEAPS[0], HEAPS[1], easeInOut(prog(t, 4.4, 4.9)));
-  if (t < 5.9) return HEAPS[1];
-  if (t < 6.4) return lerp(HEAPS[1], HEAPS[2], easeInOut(prog(t, 5.9, 6.4)));
+  if (t < POUR[0][1]) return HEAPS[0];
+  if (t < POUR[1][0]) return lerp(HEAPS[0], HEAPS[1], eio(prog(t, POUR[0][1] + .05, POUR[1][0] - .05)));
+  if (t < POUR[1][1]) return HEAPS[1];
+  if (t < POUR[2][0]) return lerp(HEAPS[1], HEAPS[2], eio(prog(t, POUR[1][1] + .05, POUR[2][0] - .05)));
   return HEAPS[2];
 }
-function heapAmount(i, t) { return easeOut(prog(t, POUR[i][0] + .15, POUR[i][1] + .1)); }
+const heapGrow = (i, t) => eo(prog(t, POUR[i][0] + .25, POUR[i][1] + .2));
+const barX = t => lerp(-4.3, 4.3, eio(prog(t, ...STRAIGHT)));
+const trowelX = t => lerp(-4.6, 4.6, eio(prog(t, ...TROWEL)));
 
-// Surface height (y) of the mortar at x, before levelling: overlapping cones.
-function heapSurface(x, t) {
-  let top = FLOOR;
-  HEAPS.forEach((hx, i) => {
-    const a = heapAmount(i, t); if (a <= 0) return;
-    const h = 125 * Math.sqrt(a), halfW = 175 * Math.sqrt(a) + 10;
-    const d = Math.abs(x - hx);
-    if (d < halfW) top = Math.min(top, FLOOR - h * (1 - d / halfW) - 4 * Math.sin(x * .09) * a);
-  });
-  return top;
-}
-const STRAIGHT = [10.6, 13.6];  // straightedge pass
-const TROWEL = [14.0, 16.6];    // power trowel pass
-function straightFront(t) { return lerp(-120, 1200, easeInOut(prog(t, STRAIGHT[0], STRAIGHT[1]))); }
-function trowelX(t) { return lerp(-160, 1240, easeInOut(prog(t, TROWEL[0], TROWEL[1]))); }
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1); renderer.setSize(W, H, false);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = .82;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#0b1124');
+scene.fog = new THREE.Fog('#0b1124', 14, 30);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
+scene.environmentIntensity = .35;
+const camera = new THREE.PerspectiveCamera(40, W / H, .05, 80);
 
-function surface(x, t) {
-  const raw = heapSurface(x, t);
-  if (t < STRAIGHT[0]) return raw;
-  const f = straightFront(t);
-  if (x < f - 40) return LEVEL;
-  if (x < f) return lerp(LEVEL, Math.min(raw, LEVEL - 14), (x - (f - 40)) / 40); // material pushed ahead of the bar
-  return raw;
-}
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W / 2, H / 2), .45, .4, .97));
+composer.addPass(new OutputPass());
 
-function drawWall(t) {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#f4efe7'); g.addColorStop(1, C.wall);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = C.wallLine; ctx.lineWidth = 2;               // block wall joints
-  for (let y = 560, r = 0; y < SCENE_Y; y += 70, r++) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    for (let x = (r % 2) * 90; x < W; x += 180) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 70); ctx.stroke(); }
+// Lights: warm key with soft shadows, cool rim, low fill.
+const key = new THREE.DirectionalLight('#fff3e2', 2.4);
+key.position.set(7, 9, 3); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -.0004; key.shadow.normalBias = .02;
+Object.assign(key.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 1, far: 30 });
+scene.add(key);
+const rim = new THREE.DirectionalLight('#6f8dff', 2.2); rim.position.set(-6, 4, -6); scene.add(rim);
+scene.add(new THREE.HemisphereLight('#c8d4ff', '#1a1410', .35));
+
+// ---------- procedural textures ----------
+function noiseTex(base, spots, size = 512, rep = 2, count = 9000, scale = [1, 3]) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const x = c.getContext('2d'); x.fillStyle = base; x.fillRect(0, 0, size, size);
+  for (let i = 0; i < count; i++) {
+    x.fillStyle = spots[i % spots.length]; x.globalAlpha = .25 + rnd(i + 3) * .6;
+    const r = scale[0] + rnd(i + 7) * (scale[1] - scale[0]);
+    x.beginPath(); x.arc(rnd(i) * size, rnd(i + 1e4) * size, r, 0, 7); x.fill();
   }
-  const fade = ctx.createLinearGradient(0, 520, 0, 700);          // fade the wall out towards the top
-  fade.addColorStop(0, '#f4efe7'); fade.addColorStop(1, 'rgba(244,239,231,0)');
-  ctx.fillStyle = fade; ctx.fillRect(0, 520, W, 180);
+  const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(rep, rep);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; return tex;
 }
-function drawSlab() {
-  ctx.fillStyle = C.slab; ctx.fillRect(-200, FLOOR, W + 400, 170);
-  ctx.strokeStyle = C.slabDark; ctx.lineWidth = 3;
-  for (let x = -400; x < W + 200; x += 34) { ctx.beginPath(); ctx.moveTo(x, FLOOR + 170); ctx.lineTo(x + 170, FLOOR); ctx.stroke(); }
-  ctx.fillStyle = '#7c776f'; ctx.fillRect(-200, FLOOR + 170, W + 400, 14);
-  ctx.fillStyle = '#6b665f'; ctx.fillRect(-200, FLOOR + 184, W + 400, 700);          // ground below, fills the frame
-  for (let i = 0; i < 260; i++) { ctx.fillStyle = i % 2 ? '#625d56' : '#77726a'; ctx.beginPath(); ctx.arc(-200 + rand(i + 7e3) * (W + 400), FLOOR + 200 + rand(i + 8e3) * 600, 3 + rand(i) * 6, 0, 7); ctx.fill(); }
-}
-const SCENE_Y = 1150, SCENE_S = 1.3;   // the floor line sits here on screen, scene drawn 1.3x
-function sceneSpace() { ctx.translate(W / 2, SCENE_Y); ctx.scale(SCENE_S, SCENE_S); ctx.translate(-W / 2, -FLOOR); }
+const concreteTex = noiseTex('#9c988f', ['#85817a', '#b3afa6', '#77736d', '#c2beb5'], 512, 3);
+const wallTex = noiseTex('#a39d93', ['#958f85', '#b0aaa0', '#8a847a'], 512, 2, 6000);
+const mortarTex = noiseTex('#2a2a2c', ['#1a1a1c', '#3b3b3e', '#4a4a4e', '#121213'], 512, 6, 22000, [1, 2.6]);
+const smoothTex = noiseTex('#5b5c60', ['#545559', '#64656a', '#4f5054'], 512, 4, 4000, [2, 6]);
 
-function drawMortar(t) {
-  // Silhouette.
-  ctx.beginPath(); ctx.moveTo(0, FLOOR);
-  for (let x = 0; x <= W; x += 6) ctx.lineTo(x, surface(x, t));
-  ctx.lineTo(W, FLOOR); ctx.closePath();
-  ctx.fillStyle = C.mortar[0]; ctx.fill();
-  // Granular grains: dark, crumbly, damp-sand look. Behind the trowel the surface turns smooth.
-  ctx.save(); ctx.clip();
-  const tx = t >= TROWEL[0] ? trowelX(t) : -1e9;
-  for (let i = 0; i < 2600; i++) {
-    const x = rand(i) * W, y = FLOOR - rand(i + 9e3) * 140;
-    if (y < surface(x, t) - 2) continue;
-    const smoothed = x < tx - 60 && y < LEVEL + 10;
-    if (smoothed) continue;
-    ctx.fillStyle = C.mortar[1 + (i % 4)];
-    const r = 2 + rand(i + 5e3) * 4.5;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-  }
-  if (t >= TROWEL[0]) {                                            // troweled skin
-    const sx = clamp(tx - 60, 0, W);
-    const g = ctx.createLinearGradient(0, LEVEL, 0, LEVEL + 30);
-    g.addColorStop(0, '#6a6b6f'); g.addColorStop(1, C.mortar[0]);
-    ctx.fillStyle = g; ctx.fillRect(0, LEVEL, sx, 30);
-    const shine = prog(t, 16.4, 17.6);                             // a sheen sweeps across the finished floor
-    if (shine > 0 && shine < 1) {
-      const px = lerp(-200, W + 200, shine);
-      const s = ctx.createLinearGradient(px - 120, 0, px + 120, 0);
-      s.addColorStop(0, 'rgba(255,255,255,0)'); s.addColorStop(.5, 'rgba(255,255,255,.45)'); s.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = s; ctx.fillRect(0, LEVEL, sx, 8);
+// ---------- the diorama: a floating cutaway of a room ----------
+const SX = 7.2, SZ = 3.8, SLAB = .5;
+const mat = {
+  concrete: new THREE.MeshStandardMaterial({ map: concreteTex, roughness: .92 }),
+  wall: new THREE.MeshStandardMaterial({ map: wallTex, roughness: .9 }),
+  steel: new THREE.MeshStandardMaterial({ color: '#b9c0c8', metalness: .85, roughness: .32, side: THREE.DoubleSide }),
+  steelDark: new THREE.MeshStandardMaterial({ color: '#5a6069', metalness: .8, roughness: .45 }),
+  rubber: new THREE.MeshStandardMaterial({ color: '#141416', roughness: .55 }),
+  alu: new THREE.MeshStandardMaterial({ color: '#dfe4ea', metalness: 1, roughness: .22 }),
+  red: new THREE.MeshStandardMaterial({ color: '#d32420', roughness: .35, metalness: .1 }),
+  yellow: new THREE.MeshStandardMaterial({ color: '#f2a516', roughness: .4 }),
+  black: new THREE.MeshStandardMaterial({ color: '#16171a', roughness: .5 }),
+};
+function box(w, h, d, m, x, y, z) { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); b.castShadow = b.receiveShadow = true; scene.add(b); return b; }
+box(SX, SLAB, SZ, mat.concrete, 0, -SLAB / 2, 0);                                   // base slab
+box(SX + .3, .9, .25, mat.wall, -.15, .43, -SZ / 2 - .125);                         // back wall (low, cut)
+box(.25, .9, SZ, mat.wall, -SX / 2 - .125, .43, 0);                                 // side wall
+const contact = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), new THREE.ShadowMaterial({ opacity: .45 }));
+contact.rotation.x = -Math.PI / 2; contact.position.y = -SLAB - .6; contact.receiveShadow = true; scene.add(contact);
+
+// Screed layer behind the straightedge (granular) and behind the trowel (smooth), revealed with clipping planes.
+const planeBar = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);     // keeps x < c
+const planeBarInv = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);   // keeps x > c
+const planeTrowel = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+const planeTrowelInv = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+const roughLayer = new THREE.Mesh(new THREE.BoxGeometry(SX, LEVEL, SZ),
+  new THREE.MeshStandardMaterial({ map: mortarTex, roughness: 1, clippingPlanes: [planeBar, planeTrowelInv] }));
+roughLayer.position.y = LEVEL / 2; roughLayer.receiveShadow = true; scene.add(roughLayer);
+const smoothLayer = new THREE.Mesh(new THREE.BoxGeometry(SX, LEVEL, SZ),
+  new THREE.MeshPhysicalMaterial({ map: smoothTex, roughness: .38, clearcoat: .35, clearcoatRoughness: .3, clippingPlanes: [planeTrowel] }));
+smoothLayer.position.y = LEVEL / 2; smoothLayer.receiveShadow = true; scene.add(smoothLayer);
+
+// Heap cores: lumpy cones of dark mix, cut away behind the straightedge.
+const heapMat = new THREE.MeshStandardMaterial({ map: mortarTex, roughness: 1, side: THREE.DoubleSide, clippingPlanes: [planeBarInv] });
+const heapGeo = new THREE.ConeGeometry(HEAP_R, HEAP_H, 64, 10, true);
+{ const p = heapGeo.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), a = Math.atan2(z, x);
+    const k = 1 + .06 * Math.sin(a * 7 + y * 9) + .04 * Math.sin(a * 13 - y * 17); p.setXYZ(i, x * k, y, z * k); }
+  heapGeo.translate(0, HEAP_H / 2, 0); heapGeo.computeVertexNormals(); }
+const heaps = HEAPS.map((hx, i) => { const m = new THREE.Mesh(heapGeo, heapMat); m.position.set(hx, 0, .05 + (i - 1) * .12);
+  m.receiveShadow = true; scene.add(m); return m; });
+
+// Granules: crumbly semi-moist pumice-cement clumps (dark charcoal, faceted, never liquid).
+const PER = 2600, N = PER * 3;
+const grains = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.032, 0), new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }), N);
+grains.castShadow = true; grains.receiveShadow = true; scene.add(grains);
+const shades = ['#1d1d1f', '#2c2c2f', '#3a3a3e', '#47474c', '#151517'].map(c => new THREE.Color(c));
+const G = [];
+for (let i = 0; i < N; i++) {
+  const h = Math.floor(i / PER), [p0, p1] = POUR[h];
+  const land = lerp(p0 + .3, p1, Math.pow(rnd(i + 11), .9));      // landing time inside the pour window
+  const a = rnd(i + 21) * Math.PI * 2, u = Math.sqrt(rnd(i + 31));
+  const s = Math.cbrt(Math.max(.02, heapGrow(h, land)));           // lands on the surface the heap has at that moment
+  const r = u * HEAP_R * s, y = (HEAP_H * s) * (1 - u) + .02;
+  G.push({ h, land, x: HEAPS[h] + Math.cos(a) * r, z: heaps[h].position.z + Math.sin(a) * r, y,
+    sz: .55 + rnd(i + 41) * 1.0, rx: rnd(i + 51) * 6, ry: rnd(i + 61) * 6,
+    jx: (rnd(i + 71) - .5) * .12, jz: (rnd(i + 81) - .5) * .12, fz: (rnd(i + 91) - .5) * (SZ - .3) });
+  grains.setColorAt(i, shades[i % 5]);
+}
+const dummy = new THREE.Object3D();
+function updateGrains(t) {
+  const bx = barX(t), tx = trowelX(t), FALL = .42, POT_Y = 1.02;
+  for (let i = 0; i < N; i++) {
+    const g = G[i]; let x = g.x, y = g.y, z = g.z, s = g.sz;
+    if (t < g.land - FALL) s = 0;
+    else if (t < g.land) {                                    // in flight: drops out of the bottom of the pot
+      const k = (t - (g.land - FALL)) / FALL, px = tripodX(g.land) + g.jx, pz = heaps[g.h].position.z + g.jz;
+      x = lerp(px, g.x, k); z = lerp(pz, g.z, k); y = lerp(POT_Y, g.y, k * k);
     }
+    if (t >= STRAIGHT[0] && x < bx + .25) {                   // swept flat by the straightedge, a berm rides ahead
+      const k = clamp((bx + .25 - x) / .5);
+      y = lerp(y + .08 * (1 - k), LEVEL + .005, k); z = lerp(z, g.fz, k * .6);
+      if (x < bx - .5) s = 0;
+    }
+    if (t >= TROWEL[0] && x < tx) s = 0;
+    dummy.position.set(x, y, z); dummy.rotation.set(g.rx, g.ry, 0); dummy.scale.setScalar(s);
+    dummy.updateMatrix(); grains.setMatrixAt(i, dummy.matrix);
   }
-  ctx.restore();
+  grains.instanceMatrix.needsUpdate = true;
 }
 
-function drawHoseAndTripod(t, alpha) {
-  if (alpha <= 0) return;
-  const x = tripodX(t), potTop = 905, potBot = 965;
-  ctx.save(); ctx.globalAlpha = alpha;
-  // Thick rubber delivery hose coming in from the pump (off-screen left), into the SIDE of the pot.
-  ctx.strokeStyle = C.hose; ctx.lineWidth = 34; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(-60, 760);
-  ctx.bezierCurveTo(x * .35, 700, x - 160, 960, x - 62, 936); ctx.stroke();
-  ctx.strokeStyle = '#3a3a3d'; ctx.lineWidth = 8;
-  ctx.beginPath(); ctx.moveTo(-60, 748); ctx.bezierCurveTo(x * .35, 688, x - 165, 948, x - 66, 924); ctx.stroke();
-  ctx.fillStyle = C.steelDark; rr(x - 72, 920, 22, 34, 4); ctx.fill();          // metal coupling
-  // Three thin splayed legs with foot pads.
-  ctx.strokeStyle = C.steelDark; ctx.lineWidth = 9; ctx.lineCap = 'round';
-  [[-1, 0], [1, 0], [.15, 1]].forEach(([s, back]) => {
-    const fx = x + s * 92, fy = FLOOR - 2 - back * 6;
-    const top = surface(fx, t);
-    ctx.beginPath(); ctx.moveTo(x + s * 30, potBot - 6); ctx.lineTo(fx, Math.min(fy, top + 6)); ctx.stroke();
-    ctx.fillStyle = C.steelDark; rr(fx - 16, Math.min(fy, top + 6) - 4, 32, 9, 3); ctx.fill();
-  });
-  // Short open cylindrical steel pot, mortar-stained.
-  const g = ctx.createLinearGradient(x - 50, 0, x + 50, 0);
-  g.addColorStop(0, '#7b838c'); g.addColorStop(.45, '#c3cad1'); g.addColorStop(1, '#6b737b');
-  ctx.fillStyle = g; ctx.fillRect(x - 50, potTop, 100, potBot - potTop);
-  ctx.fillStyle = 'rgba(60,60,62,.55)'; ctx.fillRect(x - 50, potBot - 18, 100, 18);
-  ctx.fillStyle = '#4b5158'; ctx.beginPath(); ctx.ellipse(x, potTop, 50, 11, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = C.mortar[0]; ctx.beginPath(); ctx.ellipse(x, potTop + 2, 42, 7, 0, 0, 7); ctx.fill();
-  ctx.restore();
-}
-
-function drawFallingMix(t) {
-  // Semi-moist mix drops out of the bottom of the pot as crumbly clumps (never a liquid stream).
-  const i = POUR.findIndex(([a, b]) => t >= a && t <= b);
-  if (i < 0) return;
-  const x = HEAPS[i], y0 = 968, y1 = heapSurface(x, t);
-  const k = prog(t, POUR[i][0], POUR[i][0] + .2) * (1 - prog(t, POUR[i][1] - .15, POUR[i][1]));
-  for (let n = 0; n < 34; n++) {
-    const ph = (t * 2.4 + rand(n) ) % 1;
-    const y = lerp(y0, y1, ph * ph);
-    if (y > y1) continue;
-    ctx.fillStyle = C.mortar[n % 5]; ctx.globalAlpha = k;
-    const r = 3 + rand(n + 50) * 5;
-    ctx.beginPath(); ctx.arc(x + (rand(n + 99) - .5) * 30, y, r, 0, 7); ctx.fill();
+// ---------- the tripod outlet (signature equipment) ----------
+const tripod = new THREE.Group(); scene.add(tripod);
+const POT_H = .32, POT_R = .22, LEG_TOP = 1.0;
+{ const pot = new THREE.Mesh(new THREE.CylinderGeometry(POT_R, POT_R * .92, POT_H, 40, 1, true), mat.steel);
+  pot.position.y = LEG_TOP + POT_H / 2; pot.castShadow = true; tripod.add(pot);
+  const stain = new THREE.Mesh(new THREE.CylinderGeometry(POT_R * .925, POT_R * .92, .1, 40, 1, true), new THREE.MeshStandardMaterial({ color: '#3b3b3e', roughness: .9 }));
+  stain.position.y = LEG_TOP + .05; tripod.add(stain);
+  const inner = new THREE.Mesh(new THREE.CircleGeometry(POT_R * .95, 40), new THREE.MeshStandardMaterial({ map: mortarTex, roughness: 1 }));
+  inner.rotation.x = -Math.PI / 2; inner.position.y = LEG_TOP + POT_H * .7; tripod.add(inner);
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(POT_R, .018, 10, 48), mat.steel); lip.rotation.x = Math.PI / 2; lip.position.y = LEG_TOP + POT_H; tripod.add(lip);
+  for (let k = 0; k < 3; k++) {                                // three thin splayed legs with foot pads
+    const a = k * Math.PI * 2 / 3 + .5, foot = new THREE.Vector3(Math.cos(a) * .62, .02, Math.sin(a) * .62);
+    const top = new THREE.Vector3(Math.cos(a) * POT_R * .8, LEG_TOP + .04, Math.sin(a) * POT_R * .8);
+    const len = foot.distanceTo(top), leg = new THREE.Mesh(new THREE.CylinderGeometry(.022, .022, len, 10), mat.steelDark);
+    leg.position.copy(top).add(foot).multiplyScalar(.5); leg.lookAt(foot); leg.rotateX(Math.PI / 2); leg.castShadow = true; tripod.add(leg);
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(.07, .08, .03, 16), mat.steelDark); pad.position.copy(foot); tripod.add(pad);
   }
-  ctx.globalAlpha = 1;
+  const coupling = new THREE.Mesh(new THREE.CylinderGeometry(.075, .075, .14, 20), mat.steelDark);
+  coupling.rotation.z = Math.PI / 2; coupling.position.set(-POT_R - .06, LEG_TOP + POT_H * .55, 0); tripod.add(coupling);
+}
+// Thick rubber delivery hose from the pump (back-left) into the SIDE of the pot; rebuilt as the tripod moves.
+let hose = null;
+function updateHose(t, vis) {
+  const x = tripodX(t), z = heaps[1].position.z, y = LEG_TOP + POT_H * .55 + tripod.position.y;
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(x - .2, -1.2, -SZ / 2 - 1.6), new THREE.Vector3(x - .5, .7, -SZ / 2 - .35), new THREE.Vector3(x - .7, 1.05, -SZ / 2 + .1),
+    new THREE.Vector3(x - 1.0, .45, -.9), new THREE.Vector3(x - .75, y + .05, z), new THREE.Vector3(x - POT_R - .1, y, z)]);
+  if (hose) { hose.geometry.dispose(); scene.remove(hose); }
+  hose = new THREE.Mesh(new THREE.TubeGeometry(curve, 90, .085, 14), mat.rubber);
+  hose.castShadow = true; hose.visible = vis; scene.add(hose);
 }
 
-function drawLaser(t) {
-  const a = prog(t, 7.3, 7.8) * (1 - prog(t, 14.2, 14.7));
-  if (a <= 0) return;
-  ctx.save(); ctx.globalAlpha = a;
-  const bx = 890, by = LEVEL;                                       // rotating laser on a tall stand, right side
-  ctx.strokeStyle = '#2b2f36'; ctx.lineWidth = 7;
-  [[-46, FLOOR], [46, FLOOR], [0, FLOOR + 4]].forEach(([dx, fy]) => { ctx.beginPath(); ctx.moveTo(bx, by + 40); ctx.lineTo(bx + dx, Math.min(fy, surface(bx + dx, t))); ctx.stroke(); });
-  ctx.fillStyle = '#f0a21a'; rr(bx - 34, by - 4, 68, 46, 10); ctx.fill();
-  ctx.fillStyle = '#222'; rr(bx - 20, by - 40, 40, 40, 8); ctx.fill();
-  ctx.fillStyle = C.laser; ctx.beginPath(); ctx.arc(bx, by - 20, 7, 0, 7); ctx.fill();
-  // The beam draws out from the device to the left, then the target line glows.
-  const reach = easeOut(prog(t, 7.8, 8.8));
-  const x0 = lerp(bx, 0, reach);
-  ctx.shadowColor = C.laser; ctx.shadowBlur = 18;
-  ctx.strokeStyle = C.laser; ctx.lineWidth = 4;
-  ctx.setLineDash([26, 12]); ctx.lineDashOffset = -t * 120;
-  ctx.beginPath(); ctx.moveTo(bx - 10, by - 20); ctx.lineTo(x0, by - 20); ctx.stroke();
-  ctx.setLineDash([]);
-  // Red dots where the beam hits the heaps.
-  HEAPS.forEach(hx => { if (hx > x0) { ctx.beginPath(); ctx.arc(hx, by - 20, 9 + 2 * Math.sin(t * 9), 0, 7); ctx.fillStyle = C.laser; ctx.fill(); } });
-  ctx.restore();
-  // Level marker on the left wall.
-  const m = prog(t, 8.6, 9.2) * (1 - prog(t, 14.2, 14.7));
-  if (m > 0) {
-    ctx.save(); ctx.globalAlpha = m;
-    ctx.fillStyle = C.navy; rr(-40, LEVEL - 40, 92, 40, 10); ctx.fill();
-    text('تراز', 6, LEVEL - 20, 26, C.white, 800);
-    ctx.restore();
-  }
+// ---------- laser level ----------
+const laser = new THREE.Group(); scene.add(laser);
+{ for (let k = 0; k < 3; k++) { const a = k * 2.1 + .3, leg = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, 1.25, 8), mat.black);
+    leg.position.set(Math.cos(a) * .2, .58, Math.sin(a) * .2); leg.rotation.set(Math.sin(a) * .32, 0, -Math.cos(a) * .32); leg.castShadow = true; laser.add(leg); }
+  const body = new THREE.Mesh(new THREE.BoxGeometry(.32, .26, .32), mat.yellow); body.position.y = 1.28; body.castShadow = true; laser.add(body);
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(.09, .11, .16, 24), mat.black); head.position.y = 1.49; laser.add(head);
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(.035, 16, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff3b30').multiplyScalar(5) })); eye.position.y = 1.49; laser.add(eye); }
+const LASER_AT = new THREE.Vector3(-3.0, 0, -1.35);
+const laserPlane = new THREE.Mesh(new THREE.PlaneGeometry(SX + .2, SZ + .2),
+  new THREE.MeshBasicMaterial({ color: '#ff2d20', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+laserPlane.rotation.x = -Math.PI / 2; laserPlane.position.y = LEVEL + .002; scene.add(laserPlane);
+const beam = new THREE.Mesh(new THREE.BoxGeometry(7, .012, .012), new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff4030').multiplyScalar(4), transparent: true }));
+beam.geometry.translate(-3.5, 0, 0); scene.add(beam);
+const lineMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff3a2a').multiplyScalar(4), transparent: true, opacity: 0 });
+const wallLine = new THREE.Mesh(new THREE.BoxGeometry(SX + .3, .018, .01), lineMat); wallLine.position.set(-.15, LEVEL, -SZ / 2 + .005); scene.add(wallLine);
+const wallLine2 = new THREE.Mesh(new THREE.BoxGeometry(.01, .018, SZ), lineMat); wallLine2.position.set(-SX / 2 + .005, LEVEL, 0); scene.add(wallLine2);
+
+// ---------- straightedge ----------
+const bar = new THREE.Group(); scene.add(bar);
+{ const b = new THREE.Mesh(new THREE.BoxGeometry(.07, .14, SZ + .5), mat.alu); b.castShadow = true; b.position.y = .07; bar.add(b);
 }
 
-function drawStraightedge(t) {
-  if (t < STRAIGHT[0] - .3 || t > STRAIGHT[1] + .4) return;
-  const a = prog(t, STRAIGHT[0] - .3, STRAIGHT[0]) * (1 - prog(t, STRAIGHT[1], STRAIGHT[1] + .4));
-  const f = straightFront(t);
-  ctx.save(); ctx.globalAlpha = a;
-  // Long aluminium straightedge riding on the level line, tilted slightly as it is pulled.
-  ctx.translate(f - 230, LEVEL);
-  const g = ctx.createLinearGradient(0, -30, 0, 0);
-  g.addColorStop(0, '#f2f5f8'); g.addColorStop(.5, '#b7bfc8'); g.addColorStop(1, '#7d8690');
-  ctx.fillStyle = g; rr(-200, -30, 430, 30, 6); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,.7)'; rr(-190, -26, 410, 5, 2); ctx.fill();
-  ctx.fillStyle = '#4d545c';                                                        // two grips for the crew
-  [-120, 150].forEach(gx => { rr(gx - 6, -62, 12, 34, 4); ctx.fill(); rr(gx - 26, -70, 52, 12, 6); ctx.fill(); });
-  ctx.restore();
-  // Crumbs pushed ahead of the bar.
-  for (let n = 0; n < 14; n++) {
-    const px = f + 6 + rand(n + 300) * 40, py = LEVEL - 6 - rand(n + 400) * 22 + Math.sin(t * 14 + n) * 3;
-    ctx.fillStyle = C.mortar[n % 5]; ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(px, py, 3 + rand(n) * 3, 0, 7); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
+// ---------- power trowel ----------
+const trowel = new THREE.Group(); scene.add(trowel);
+const blades = new THREE.Group(); trowel.add(blades);
+{ const ring = new THREE.Mesh(new THREE.TorusGeometry(.62, .035, 12, 64), mat.steel); ring.rotation.x = Math.PI / 2; ring.position.y = .09; trowel.add(ring);
+  for (let k = 0; k < 4; k++) { const bl = new THREE.Mesh(new THREE.BoxGeometry(.56, .012, .14), mat.steelDark); bl.position.set(Math.cos(k * Math.PI / 2) * .3, .02, Math.sin(k * Math.PI / 2) * .3); bl.rotation.y = -k * Math.PI / 2; blades.add(bl); }
+  const motor = new THREE.Mesh(new THREE.BoxGeometry(.42, .3, .34), mat.red); motor.position.y = .42; motor.castShadow = true; trowel.add(motor);
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(.3, .12, .26), mat.black); cap.position.y = .63; trowel.add(cap);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, .25, 12), mat.black); post.position.y = .2; trowel.add(post);
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(.025, .025, 1.7, 10), mat.black); handle.position.set(-.65, .9, 0); handle.rotation.z = .9; handle.castShadow = true; trowel.add(handle);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .55, 10), mat.black); grip.position.set(-1.33, 1.42, 0); grip.rotation.x = Math.PI / 2; trowel.add(grip); }
+
+// ---------- camera path: [time, position, target], eased between keys ----------
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const CAM = [
+  [0.0, V(-0.9, 1.05, 1.75), V(-2.15, .7, .0)],      // close on the first pour
+  [2.2, V(-1.0, 1.2, 2.1), V(-2.1, .62, .0)],
+  [3.6, V(7.2, 5.0, 4.0), V(-.2, .2, 0)],            // pull back: the whole cutaway
+  [7.4, V(6.8, 4.5, 5.0), V(-.2, .2, 0)],
+  [8.4, V(7.6, 1.35, 2.9), V(0, .35, 0)],            // low, grazing the laser plane
+  [10.8, V(7.9, 1.15, 1.7), V(0, .35, 0)],
+  [11.6, V(-3.0, 3.3, 5.4), V(-2.1, .3, -.3)],      // behind the straightedge (then tracks it, below)
+  [14.2, V(2.2, 3.3, 5.4), V(3.1, .3, -.3)],
+  [15.0, V(-7.8, 4.2, 3.6), V(-.4, .3, 0)],          // from the far end for the trowel
+  [18.2, V(-6.2, 5.6, 5.2), V(.4, .3, 0)],
+  [20.0, V(6.0, 11.0, 3.2), V(0, 0, 0)],             // the finished floor from above
+  [22.0, V(6.4, 11.8, 3.2), V(0, 0, 0)],
+];
+const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+function placeCamera(t) {
+  let i = 0; while (i < CAM.length - 2 && t > CAM[i + 1][0]) i++;
+  const [t0, p0, q0] = CAM[i], [t1, p1, q1] = CAM[i + 1], k = eio(prog(t, t0, t1));
+  _p.lerpVectors(p0, p1, k); _q.lerpVectors(q0, q1, k);
+  if (t > 11.6 && t < 14.2) { const bx = clamp(barX(t), -2.6, 2.6); _p.set(bx - .4, 3.3, 5.4); _q.set(bx + .5, .3, -.3); }   // ride behind the bar
+  _p.x += Math.sin(t * .7) * .05; _p.y += Math.sin(t * .9 + 1) * .03;   // hand-held drift
+  camera.position.copy(_p); camera.lookAt(_q);
 }
 
-function drawTrowel(t) {
-  if (t < TROWEL[0] - .3 || t > TROWEL[1] + .5) return;
-  const a = prog(t, TROWEL[0] - .3, TROWEL[0]) * (1 - prog(t, TROWEL[1], TROWEL[1] + .5));
-  const x = trowelX(t), y = LEVEL;
-  ctx.save(); ctx.globalAlpha = a;
-  // Handle up and to the left (operator walks behind).
-  ctx.strokeStyle = '#33373d'; ctx.lineWidth = 12; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(x, y - 60); ctx.lineTo(x - 230, y - 330); ctx.stroke();
-  ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(x - 262, y - 345); ctx.lineTo(x - 198, y - 315); ctx.stroke();
-  // Engine block.
-  ctx.fillStyle = C.red; rr(x - 52, y - 112, 104, 62, 12); ctx.fill();
-  ctx.fillStyle = '#2b2b2b'; rr(x - 40, y - 132, 70, 24, 6); ctx.fill();
-  // Ring guard + spinning blades (perspective ellipse).
-  ctx.fillStyle = '#4a4f56'; ctx.beginPath(); ctx.ellipse(x, y - 22, 150, 30, 0, 0, 7); ctx.fill();
-  ctx.strokeStyle = '#8e969f'; ctx.lineWidth = 8; ctx.beginPath(); ctx.ellipse(x, y - 22, 150, 30, 0, 0, 7); ctx.stroke();
-  ctx.strokeStyle = '#d6dbe0'; ctx.lineWidth = 9;
-  for (let b = 0; b < 4; b++) {
-    const ang = t * 14 + b * Math.PI / 2;
-    ctx.beginPath(); ctx.moveTo(x, y - 18); ctx.lineTo(x + Math.cos(ang) * 132, y - 18 + Math.sin(ang) * 22); ctx.stroke();
-  }
-  ctx.fillStyle = '#2b2b2b'; ctx.fillRect(x - 6, y - 52, 12, 34);
-  ctx.restore();
+function updateScene(t) {
+  heaps.forEach((m, i) => { const gr = heapGrow(i, t); m.scale.setScalar(Math.cbrt(Math.max(.0001, gr))); m.visible = gr > .002 && t < TROWEL[1]; });
+  const bx = barX(t), tx = trowelX(t);
+  planeBar.constant = t >= STRAIGHT[0] ? bx - .35 : -99;  planeBarInv.constant = t >= STRAIGHT[0] ? -(bx - .35) : 99;
+  planeTrowel.constant = t >= TROWEL[0] ? tx : -99;       planeTrowelInv.constant = t >= TROWEL[0] ? -tx : 99;
+  // Tripod: there for the pour, then lifted out.
+  tripod.visible = t < 7.7;
+  tripod.position.set(tripodX(t), eio(prog(t, 7.0, 7.7)) * 3, heaps[1].position.z);
+  updateHose(t, tripod.visible);
+  // Laser: rises in, rotating beam, translucent level plane, line on the walls.
+  const la = prog(t, 7.6, 8.2) * (1 - prog(t, 11.2, 11.8));
+  laser.visible = la > 0; laser.position.copy(LASER_AT); laser.position.y = (1 - eo(prog(t, 7.4, 8.0))) * -3;
+  laserPlane.material.opacity = .11 * la * (1 - prog(t, 11.0, 11.6)) * (.85 + .15 * Math.sin(t * 20));
+  beam.visible = la > 0; beam.position.set(LASER_AT.x, 1.49 + laser.position.y, LASER_AT.z);
+  beam.rotation.y = t * 9; beam.material.opacity = la;
+  lineMat.opacity = la * clamp((t - 8.2) * 2);
+  // Straightedge drops in, sweeps, lifts out.
+  bar.visible = t > STRAIGHT[0] - .4 && t < STRAIGHT[1] + .5;
+  bar.position.set(bx, LEVEL + (1 - eo(prog(t, STRAIGHT[0] - .4, STRAIGHT[0]))) * 2 + eo(prog(t, STRAIGHT[1], STRAIGHT[1] + .5)) * 2, 0);
+  // Trowel.
+  trowel.visible = t > TROWEL[0] - .5 && t < TROWEL[1] + .6;
+  trowel.position.set(tx, LEVEL + (1 - eo(prog(t, TROWEL[0] - .5, TROWEL[0]))) * 2 + eo(prog(t, TROWEL[1], TROWEL[1] + .6)) * 2, Math.sin(t * 2.2) * .5);
+  blades.rotation.y = t * 22;
+  updateGrains(t);
+  placeCamera(t);
+  smoothLayer.material.clearcoat = .35 + .5 * Math.max(0, Math.sin(prog(t, 18.2, 20.5) * Math.PI));
 }
 
-// ---------- graphics layers ----------
+// ---------- 2D design layer: typography, brand, grade ----------
+const C = { red: '#e3342b', gold: '#f3b63a', white: '#ffffff', mute: '#aab6d3', ink: '#070b18' };
+const LOGO = new Image(); LOGO.src = 'assets/logo.png';
+// Persian text in B Nazanin (rtl, same-colour stroke for weight); family 'ltr' = B Nazanin laid out left-to-right (phone).
+function T(s, x, y, size, color, weight = 900, align = 'right', alpha = 1, family = 'BNazanin') {
+  g2.save(); g2.globalAlpha *= alpha; g2.textAlign = align; g2.textBaseline = 'middle';
+  const fam = family === 'ltr' ? 'BNazanin' : family;
+  g2.direction = family === 'BNazanin' ? 'rtl' : 'ltr';
+  g2.font = `${weight} ${size}px ${fam}, Vazirmatn`; g2.fillStyle = color; g2.fillText(s, x, y);
+  if (fam === 'BNazanin') { g2.strokeStyle = color; g2.lineWidth = size * .03; g2.lineJoin = 'round'; g2.strokeText(s, x, y); }
+  g2.restore();
+}
+function rr(x, y, w, h, r) { g2.beginPath(); g2.roundRect(x, y, w, h, r); }
+function logo(cx, cy, w, alpha = 1) { const h = w * LOGO.height / LOGO.width; g2.save(); g2.globalAlpha *= alpha; g2.drawImage(LOGO, cx - w / 2, cy - h / 2, w, h); g2.restore(); }
+// Reveal a block by wiping a clip from right to left (reading direction) while it rises.
+function reveal(t, t0, dur, x, y, w, h, draw) {
+  const k = eo(prog(t, t0, t0 + dur)); if (k <= 0) return;
+  g2.save(); g2.beginPath(); g2.rect(x + w * (1 - k), y, w * k + 2, h); g2.clip();
+  g2.translate(0, (1 - k) * 24); draw(); g2.restore();
+}
+
 const STEPS = [
-  { from: 3.0, to: 7.3, n: 1, title: 'ملات نیمه‌تر از دل سه‌پایه', sub: 'پوکه معدنی + سیمان + کمی آب' },
-  { from: 7.3, to: 10.5, n: 2, title: 'تراز دقیق با لیزر', sub: 'ارتفاع کف از روی خط لیزر' },
-  { from: 10.5, to: 14.0, n: 3, title: 'شمشه‌کشی', sub: 'سطح صاف روی خط تراز' },
-  { from: 14.0, to: 17.4, n: 4, title: 'ماله پروانه', sub: 'سطح یکدست، آماده‌ی کف‌پوش' },
+  { a: 3.4, b: 7.5, n: '۰۱', title: 'پمپاژ ملات نیمه‌تر', sub: 'خروجی از سه‌پایه، نه سر شلنگ' },
+  { a: 8.2, b: 10.9, n: '۰۲', title: 'تراز لیزری', sub: 'ارتفاع دقیق کف، در کل فضا' },
+  { a: 11.4, b: 14.6, n: '۰۳', title: 'شمشه‌کشی', sub: 'سطح صاف، دقیقاً روی خط تراز' },
+  { a: 15.2, b: 19.2, n: '۰۴', title: 'ماله پروانه', sub: 'سطحی یکدست و آماده‌ی کف‌پوش' },
 ];
 
-function titleBox(title, sub, t0, t1, t, y = 1270) {
-  const a = prog(t, t0, t0 + .35) * (1 - prog(t, t1 - .3, t1));
-  if (a <= 0) return;
-  const k = backOut(prog(t, t0, t0 + .45));
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.translate(0, (1 - k) * 60);
-  const w = 860, h = 210, x = (W - w) / 2;
-  ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
-  ctx.fillStyle = C.navy; rr(x, y, w, h, 28); ctx.fill();
-  ctx.shadowColor = 'transparent';
-  ctx.fillStyle = C.red; rr(x + w - 22, y + 22, 10, h - 44, 5); ctx.fill();       // red side bar (right: start of RTL line)
-  text(title, W / 2 + 6, y + 78, 62, C.white, 900);
-  text(sub, W / 2 + 6, y + 152, 40, C.gold, 700);
-  ctx.restore();
+function grade() {
+  const v = g2.createRadialGradient(W / 2, H * .45, H * .25, W / 2, H * .5, H * .78);
+  v.addColorStop(0, 'rgba(5,8,18,0)'); v.addColorStop(1, 'rgba(5,8,18,.6)');
+  g2.fillStyle = v; g2.fillRect(0, 0, W, H);
+  const b = g2.createLinearGradient(0, H * .58, 0, H); b.addColorStop(0, 'rgba(6,9,20,0)'); b.addColorStop(.55, 'rgba(6,9,20,.82)'); b.addColorStop(1, 'rgba(6,9,20,.95)');
+  g2.fillStyle = b; g2.fillRect(0, H * .58, W, H * .42);
+  const tp = g2.createLinearGradient(0, 0, 0, 380); tp.addColorStop(0, 'rgba(6,9,20,.7)'); tp.addColorStop(1, 'rgba(6,9,20,0)');
+  g2.fillStyle = tp; g2.fillRect(0, 0, W, 380);
 }
 
-function stepTracker(t) {
-  const a = prog(t, 3.0, 3.4) * (1 - prog(t, 17.0, 17.4));
-  if (a <= 0) return;
-  const cur = STEPS.findIndex(s => t >= s.from && t < s.to);
-  const y = 420, gap = 190, x0 = W / 2 + gap * 1.5;                              // RTL: step 1 on the right
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.strokeStyle = '#cfc6b8'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - gap * 3, y); ctx.stroke();
-  const fillTo = cur < 0 ? 3 : cur + prog(t, STEPS[cur].from, STEPS[cur].to);
-  ctx.strokeStyle = C.red; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - gap * Math.min(3, fillTo), y); ctx.stroke();
-  STEPS.forEach((s, i) => {
-    const on = i <= cur || cur < 0, active = i === cur;
-    const r = active ? 46 + 3 * Math.sin(t * 6) : 36;
-    ctx.fillStyle = on ? (active ? C.red : C.navy) : '#e2dbd0';
-    ctx.beginPath(); ctx.arc(x0 - gap * i, y, r, 0, 7); ctx.fill();
-    text(fa(s.n), x0 - gap * i, y + 3, active ? 44 : 34, on ? C.white : '#9b9282', 900);
-  });
-  ctx.restore();
+function stepCard(t, s) {
+  if (t < s.a || t > s.b) return;
+  const R = W - 90, y = 1270;
+  g2.save(); g2.globalAlpha = 1 - prog(t, s.b - .35, s.b);
+  const k = eo(prog(t, s.a, s.a + .6));
+  g2.fillStyle = C.red; g2.fillRect(R - 120 * k, y - 4, 120 * k, 6);
+  reveal(t, s.a + .1, .55, 90, y + 10, W - 180, 125, () => { T(s.n, R, y + 72, 74, C.red, 900); T(s.title, R - 130, y + 72, 104, C.white, 900); });
+  reveal(t, s.a + .3, .55, 90, y + 140, W - 180, 80, () => T(s.sub, R - 130, y + 178, 52, C.mute, 700));
+  g2.restore();
 }
 
-function hook(t) {
-  const a = 1 - prog(t, 2.6, 3.0);
-  if (a <= 0) return;
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.fillStyle = C.navyDeep; ctx.fillRect(0, 0, W, H);
-  for (let i = 0; i < 9; i++) {                                                    // chevrons rising, brand motif
-    const y = 1900 - ((t * 420 + i * 260) % 2340);
-    chevron(W / 2, y, 1200, i % 2 ? '#22325f' : '#1a2749', 1);
-  }
-  const k1 = backOut(prog(t, .1, .6)), k2 = backOut(prog(t, .5, 1.0)), k3 = easeOut(prog(t, 1.1, 1.6));
-  ctx.save(); ctx.translate(W / 2, 820); ctx.scale(k1, k1);
-  text('کف‌سازی با پوکه اسکرید', 0, 0, 86, C.white, 900); ctx.restore();
-  ctx.save(); ctx.translate(W / 2, 950); ctx.scale(k2, k2);
-  text('دقیقاً چطور انجام می‌شه؟', 0, 0, 74, C.gold, 800); ctx.restore();
-  ctx.globalAlpha = a * k3;
-  ctx.fillStyle = C.red; rr(W / 2 - 230, 1060, 460, 100, 50); ctx.fill();
-  text(`${fa(4)} مرحله، ${fa(20)} ثانیه`, W / 2, 1112, 52, C.white, 900);
-  ctx.restore();
-}
-
-function wipe(t, at) {
-  // Navy chevron wipe across step changes.
-  const k = prog(t, at - .25, at + .25);
-  if (k <= 0 || k >= 1) return;
+function tracker(t) {
+  const a = prog(t, 3.2, 3.6) * (1 - prog(t, 19.3, 19.7)); if (a <= 0) return;
+  const cur = STEPS.reduce((c, s, i) => t >= s.a - .6 ? i : c, 0);
+  g2.save(); g2.globalAlpha = a;
   for (let i = 0; i < 4; i++) {
-    const y = lerp(H + 900, -900, easeInOut(clamp(k * 1.25 - i * .08)));
-    chevron(W / 2, y + i * 140, 1500, i % 2 ? C.navy : C.red, .9);
+    g2.fillStyle = i <= cur ? (i === cur ? C.red : C.white) : 'rgba(255,255,255,.25)';
+    g2.fillRect(W - 80 - i * 74 - 60, 150, 60, 5);
   }
+  T(`${STEPS[cur].n} / ۰۴`, W - 80, 200, 40, C.white, 700);
+  g2.restore();
 }
 
-const LOGO = new Image(); LOGO.src = 'assets/logo.png';
-function logo(cx, cy, w, alpha = 1) {
-  const h = w * LOGO.height / LOGO.width;
-  ctx.save(); ctx.globalAlpha *= alpha; ctx.drawImage(LOGO, cx - w / 2, cy - h / 2, w, h); ctx.restore();
-}
-function brandCorner(t) {
-  // The real logo, fixed top-left (~250px wide) for the whole video; the end card shows it large.
-  const a = 1 - prog(t, 17.2, 17.5);
-  if (a <= 0) return;
-  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
-  logo(40 + 125, 130 + 30, 250, a); ctx.restore();
+function hookText(t) {
+  const a = 1 - prog(t, 2.5, 3.0); if (a <= 0) return;
+  g2.save(); g2.globalAlpha = a; const R = W - 90;
+  reveal(t, .25, .6, 60, 1150, W - 120, 150, () => T('کف صاف و تراز', R, 1225, 132, C.white, 900));
+  reveal(t, .7, .6, 60, 1300, W - 120, 130, () => T(`در ${fa(4)} مرحله`, R, 1365, 112, C.red, 900));
+  reveal(t, 1.15, .6, 60, 1440, W - 120, 90, () => T('کفسازی با پوکه اسکرید، به روش شمال اسکرید', R, 1485, 46, C.mute, 700));
+  g2.restore();
 }
 
 function watermark(t) {
-  // Anti-repost: semi-transparent mark drifting on sine paths through the middle.
-  const a = prog(t, 3.0, 3.5) * (1 - prog(t, 17.2, 17.5));
-  if (a <= 0) return;
-  const x = W / 2 + Math.sin(t * .7) * 260, y = 760 + Math.sin(t * .43 + 1) * 140;
-  ctx.save(); ctx.globalAlpha = .22 * a; ctx.translate(x, y); ctx.rotate(Math.sin(t * .3) * .05);
-  logo(0, -40, 150);
-  text('شمال اسکرید', 0, 66, 46, C.navy, 900);
-  ltrText('shomalscreed.ir', 0, 112, 30, C.navy, 700);
-  ctx.restore();
+  // Anti-repost mark: faint, drifting on sine paths so it cannot be cropped out.
+  const a = prog(t, 3.0, 3.6) * (1 - prog(t, 19.3, 19.7)); if (a <= 0) return;
+  const x = W / 2 + Math.sin(t * .55) * 250, y = 760 + Math.sin(t * .37 + 1) * 160;
+  g2.save(); g2.globalAlpha = .2 * a; logo(x, y, 130);
+  T('shomalscreed.ir', x, y + 88, 28, C.white, 700, 'center', 1, 'Vazirmatn'); g2.restore();
 }
 
 function finale(t) {
-  const a = prog(t, 17.3, 17.7);
-  if (a <= 0) return;
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.fillStyle = C.navyDeep; ctx.fillRect(0, 0, W, H);
-  for (let i = 0; i < 7; i++) chevron(W / 2, 2100 - i * 330 - (t - 17.3) * 90, 1300, i % 2 ? '#22325f' : '#1a2749');
-  const k = n => backOut(prog(t, 17.5 + n * .14, 17.95 + n * .14));
-  const ys = [450, 0, 770, 850, 1000, 1130, 1220, 1350];
-  const row = (n, f) => { ctx.save(); const s = k(n), y = ys[n]; ctx.globalAlpha = a * clamp(s); ctx.translate(W / 2, y); ctx.scale(s, s); ctx.translate(-W / 2, -y); f(); ctx.restore(); };
-  row(0, () => logo(W / 2, 450, 460));
-  row(2, () => text('مجری تخصصی کفسازی با پوکه اسکرید', W / 2, 770, 50, C.gold, 800));
-  row(3, () => text('گروه خدمات عمرانی و مدیریت ساخت مهندس شاهنوری', W / 2, 850, 34, '#c9d1e4', 600));
-  row(4, () => { ctx.fillStyle = C.red; rr(W / 2 - 300, 940, 600, 120, 60); ctx.fill(); ltrText('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1004, 76, C.white, 900, 1, 'BNazanin'); });
-  row(5, () => ltrText('www.shomalscreed.ir', W / 2, 1130, 44, C.white, 700));
-  row(6, () => text('آمل، بابل، ساری، چالوس، نوشهر، نور و سراسر مازندران', W / 2, 1220, 34, '#c9d1e4', 600));
-  row(7, () => { ctx.strokeStyle = C.gold; ctx.lineWidth = 4; rr(W / 2 - 360, 1300, 720, 96, 48); ctx.stroke();
-                 text('این ویدیو رو برای یه سازنده بفرست', W / 2, 1350, 42, C.gold, 800); });
-  ctx.restore();
+  const a = prog(t, 19.4, 20.0); if (a <= 0) return;
+  g2.save();
+  g2.globalAlpha = a * .9; g2.fillStyle = C.ink; g2.fillRect(0, 0, W, H);
+  const glow = g2.createRadialGradient(W / 2, 640, 20, W / 2, 640, 700);
+  glow.addColorStop(0, 'rgba(40,70,160,.55)'); glow.addColorStop(1, 'rgba(40,70,160,0)');
+  g2.fillStyle = glow; g2.fillRect(0, 0, W, H);
+  g2.globalAlpha = 1;
+  const k = eo(prog(t, 19.7, 20.5));
+  logo(W / 2, 640 - (1 - k) * 40, 470 * (.85 + .15 * k), k);
+  const sw = prog(t, 20.3, 21.0);                                   // light sweep across the logo
+  if (sw > 0 && sw < 1) {
+    g2.save(); g2.globalCompositeOperation = 'lighter'; const sx = lerp(W / 2 - 330, W / 2 + 330, sw);
+    const gr = g2.createLinearGradient(sx - 80, 0, sx + 80, 0); gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(.5, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g2.fillStyle = gr; g2.fillRect(W / 2 - 300, 400, 600, 480); g2.restore();
+  }
+  const L = (n, y, h, f) => reveal(t, 20.0 + n * .12, .5, 60, y - h / 2, W - 120, h, f);
+  L(0, 965, 80, () => T('مجری تخصصی کفسازی با پوکه اسکرید', W / 2, 965, 62, C.gold, 900, 'center'));
+  L(1, 1040, 60, () => T('گروه خدمات عمرانی و مدیریت ساخت مهندس شاهنوری', W / 2, 1040, 40, C.mute, 700, 'center'));
+  L(2, 1160, 130, () => { g2.fillStyle = C.red; rr(W / 2 - 300, 1105, 600, 112, 56); g2.fill();
+    T('۰۹۱۱ ۲۹۵ ۶۱۶۴', W / 2, 1163, 78, C.white, 900, 'center', 1, 'ltr'); });
+  L(3, 1275, 60, () => T('www.shomalscreed.ir', W / 2, 1275, 44, C.white, 600, 'center', 1, 'Vazirmatn'));
+  L(4, 1350, 60, () => T('آمل، بابل، ساری، چالوس، نوشهر، نور و سراسر مازندران', W / 2, 1350, 40, C.mute, 700, 'center'));
+  L(5, 1470, 110, () => { g2.strokeStyle = C.gold; g2.lineWidth = 3; rr(W / 2 - 340, 1422, 680, 96, 48); g2.stroke();
+    T('این ویدیو رو برای یه سازنده بفرست', W / 2, 1472, 48, C.gold, 900, 'center'); });
+  g2.restore();
 }
 
-// ---------- frame ----------
 window.renderAt = function (t) {
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
-  drawWall(t);
-  ctx.save(); sceneSpace();
-  drawSlab(); drawMortar(t);
-  const tripodAlpha = prog(t, 3.0, 3.4) * (1 - prog(t, 7.4, 7.9));
-  drawFallingMix(t); drawHoseAndTripod(t, tripodAlpha);
-  drawLaser(t); drawStraightedge(t); drawTrowel(t);
-  ctx.restore();
-  watermark(t); stepTracker(t);
-  STEPS.forEach(s => titleBox(fa(s.n) + '. ' + s.title, s.sub, s.from + .1, s.to, t));
-  [7.3, 10.5, 14.0].forEach(at => wipe(t, at));
-  hook(t); brandCorner(t); finale(t);
+  updateScene(t);
+  composer.render();
+  g2.setTransform(1, 0, 0, 1, 0, 0); g2.globalAlpha = 1;
+  g2.drawImage(renderer.domElement, 0, 0, W, H);
+  grade();
+  watermark(t);
+  hookText(t);
+  STEPS.forEach(s => stepCard(t, s));
+  tracker(t);
+  g2.save(); g2.shadowColor = 'rgba(0,0,0,.35)'; g2.shadowBlur = 18; logo(165, 165, 240, 1 - prog(t, 19.4, 19.8)); g2.restore();  // fixed logo, top-left
+  finale(t);
+  for (const at of [3.0, 8.0, 11.2, 15.0]) { const f = 1 - Math.abs(t - at) / .18; if (f > 0) { g2.fillStyle = `rgba(255,255,255,${.12 * f})`; g2.fillRect(0, 0, W, H); } }
 };
-window.ready = Promise.all([LOGO.decode(), ...['900 40px BNazanin', '700 40px BNazanin', '400 40px BNazanin', '700 40px Vazirmatn'].map(f => document.fonts.load(f, 'کف'))]).then(() => { renderAt(0); return true; });
-window.META = { W, H, FPS, DURATION };
 
-// Live preview when opened directly: ?t=5 holds a frame, otherwise it plays.
+window.META = { W, H, FPS, DURATION };
+window.ready = Promise.all([LOGO.decode(), ...['900 40px BNazanin', '700 40px BNazanin', '400 40px BNazanin', '700 40px Vazirmatn'].map(f => document.fonts.load(f, 'کف'))])
+  .then(() => { renderAt(0); return true; });
+
 const q = new URLSearchParams(location.search);
 if (!navigator.webdriver) window.ready.then(() => {
   if (q.has('t')) return renderAt(+q.get('t'));

@@ -2,6 +2,12 @@
   "name": "shomal-screed-motion",
   "private": true,
   "type": "module",
-  "scripts": { "render": "node render.mjs" },
-  "dependencies": { "puppeteer-core": "^25.11.0", "vazirmatn": "^33.0.3" }
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.11.0",
+    "three": "^0.180.0",
+    "vazirmatn": "^33.0.3"
+  }
 }
