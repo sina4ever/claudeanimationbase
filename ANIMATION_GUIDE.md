@@ -221,7 +221,7 @@ node render.mjs --encode --out=out/video.mp4                    # … then encod
 | `src/timeline.js` | `shots()`, `LOOPS`, `brushWipe()` |
 | `src/sheets.js` | the model sheets as loops (`?loop=emotions`, `?loop=views`) |
 | `src/scenes/demo.js` | an 11-second example. **Don't copy it** (see the end of this guide) |
-| `studio.html` | open it in Chrome to scrub the video (`?t=2.5` jumps to a time, `?loop=emotions` shows a loop) |
+| `studio.html` | open it in Chrome to scrub and play the video (`?t=2.5` jumps to a time, `?loop=emotions` shows a loop). Space/K play, J/L ∓1 s, ←/→ one frame, Shift+←/→ ∓5 s, Home/End; the strip under the scrubber shows the shots, click it to seek |
 | `render.mjs` | headless renderer: sheets, strips, crops, stills, PNG loops, MP4 |
 
 ### Frames are pure functions of time

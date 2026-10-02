@@ -317,10 +317,48 @@ window.renderSheet = async (times, cols = 3, w = 640, crop = null, at = null) =>
 };
 window.gpuInfo = () => { const gl = drawingContext, e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); };
 
+// The studio's transport, after OpenCut's preview: Space/K play-pause, J/L back/forward 1 s, ←/→ one frame, Shift+←/→ 5 s,
+// Home/Enter to the start, End to the end. Playback follows the wall clock and loops, dropping whatever frames the painter
+// can't keep up with. Under the scrubber, the shot strip shows each shot (named after its function); click it to seek.
+// The time stays in the URL (?t=), so a reload keeps your place.
 function devUI() {
-  const s = document.getElementById('scrub'), lab = document.getElementById('tt'); s.max = window.LOOP ? window.LOOP.len : DUR;
-  let busy = false, want = null;
-  const go = async () => { if (busy) return; busy = true; while (want != null) { const t = want; want = null; const t0 = performance.now(); await window.renderAt(t); lab.textContent = `${t.toFixed(2)}s  ·  ${Math.round(performance.now() - t0)} ms/frame`; } busy = false; };
-  s.addEventListener('input', () => { want = +s.value; go(); });
-  want = +(new URLSearchParams(location.search).get('t') || 0); s.value = want; go();
+  const el = id => document.getElementById(id), s = el('scrub'), lab = el('tt'), btn = el('play'), strip = el('shots');
+  const FPS = 24, len = window.LOOP ? window.LOOP.len : DUR, last = (Math.ceil(len * FPS) - 1) / FPS;
+  const snap = t => Math.round(t * FPS) / FPS, tc = t => { const f = Math.round(t * FPS); return [Math.floor(f / FPS / 60), Math.floor(f / FPS) % 60, f % FPS].map(v => String(v).padStart(2, '0')).join(':'); };
+  s.max = last; s.step = 1 / FPS;
+  let busy = false, want = null, now = 0, play = null;   // play = { t, w }: video time t at wall time w, while playing
+  const go = async () => {
+    if (busy) return; busy = true;
+    while (want != null) {
+      const t = want; want = null; const t0 = performance.now(); await window.renderAt(t);
+      lab.textContent = `${tc(t)}  ·  ${t.toFixed(2)}s  ·  ${Math.round(performance.now() - t0)} ms/frame`;
+      if (!play) { const u = new URL(location); u.searchParams.set('t', t.toFixed(3).replace(/\.?0+$/, '')); history.replaceState(null, '', u); }
+    }
+    busy = false;
+  };
+  const show = t => { now = t; s.value = t; head.style.left = `${100 * t / len}%`; marks.forEach(([a, b, d]) => d.classList.toggle('on', t >= a && t < b)); want = t; go(); };
+  const seek = t => { t = snap(clamp(t, 0, last)); if (play) play = { t, w: performance.now() }; show(t); };
+  const toggle = () => { play = play ? null : { t: now >= last ? 0 : now, w: performance.now() }; btn.textContent = play ? '❚❚' : '▶'; if (play) requestAnimationFrame(tick); else show(now); };
+  const tick = () => { if (!play) return; const t = snap((play.t + (performance.now() - play.w) / 1000) % (last + 1 / FPS)); if (t !== now) show(t); requestAnimationFrame(tick); };
+
+  // shot strip: one block per shot, plus the playhead
+  const marks = [], head = document.createElement('i');
+  if (!window.LOOP) SHOTS.forEach(([a, fn], i) => {
+    const b = i + 1 < SHOTS.length ? SHOTS[i + 1][0] : DUR, d = document.createElement('b');
+    d.textContent = d.title = fn.name || `shot ${i + 1}`; d.style.left = `${100 * a / len}%`; d.style.width = `${100 * (b - a) / len}%`;
+    strip.append(d); marks.push([a, b, d]);
+  });
+  strip.append(head);
+  strip.addEventListener('pointerdown', e => { const r = strip.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * len); });
+
+  s.addEventListener('input', () => seek(+s.value));
+  btn.addEventListener('click', () => { toggle(); btn.blur(); });
+  const keys = { ' ': toggle, k: toggle, j: () => seek(now - 1), l: () => seek(now + 1), ArrowLeft: () => seek(now - 1 / FPS), ArrowRight: () => seek(now + 1 / FPS),
+    'S-ArrowLeft': () => seek(now - 5), 'S-ArrowRight': () => seek(now + 5), Home: () => seek(0), Enter: () => seek(0), End: () => seek(last) };
+  addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const f = keys[(e.shiftKey && e.key.startsWith('Arrow') ? 'S-' : '') + (e.key.length === 1 ? e.key.toLowerCase() : e.key)];
+    if (f) { e.preventDefault(); f(); }
+  });
+  seek(+(new URLSearchParams(location.search).get('t') || 0));
 }
